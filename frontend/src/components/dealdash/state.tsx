@@ -1,13 +1,7 @@
 "use client";
 
 import { createContext, startTransition, useContext, useEffect, useEffectEvent, useState } from "react";
-import type {
-  FollowUpItem,
-  FundedDeal,
-  ImportBatch,
-  PipelineDeal,
-  SeedDataset,
-} from "../../../../backend/src/types";
+import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset } from "@dealdash/backend";
 
 const STORAGE_KEY = "dealdash-browser-state-v1";
 

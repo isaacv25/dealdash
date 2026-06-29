@@ -3,9 +3,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   distDir: ".next-webpack",
-  experimental: {
-    externalDir: true,
-  },
+  transpilePackages: ["@dealdash/backend"],
   outputFileTracingRoot: path.resolve(process.cwd(), ".."),
 };
 

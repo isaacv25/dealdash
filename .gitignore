@@ -7,6 +7,7 @@ node_modules/
 .dealdash-next-build/
 frontend/.next-app/
 frontend/.next-webpack/
+_tmp_*
 *.log
 .env
 .env.local
