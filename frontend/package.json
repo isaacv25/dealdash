@@ -9,7 +9,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@dealdash/backend": "file:../backend",
     "lucide-react": "^0.554.0",
     "next": "16.2.9",
     "react": "19.2.4",

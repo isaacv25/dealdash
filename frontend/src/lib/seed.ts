@@ -1,5 +1,5 @@
 import "server-only";
-import { loadSeedDataset } from "@dealdash/backend/server";
+import { loadSeedDataset } from "@/lib/dealdash";
 
 export async function loadInitialSeed() {
   return loadSeedDataset();

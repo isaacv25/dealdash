@@ -20,8 +20,8 @@ import {
   periodicPaymentFromDeal,
   progressForFundedDeal,
   renewalDateForFundedDeal,
-} from "@dealdash/backend";
-import type { FollowUpItem, FundedDeal, ImportBatch, PipelineStage } from "@dealdash/backend";
+} from "@/lib/dealdash";
+import type { FollowUpItem, FundedDeal, ImportBatch, PipelineStage } from "@/lib/dealdash";
 import { CalendarClock, Download, Plus, Upload } from "lucide-react";
 import { useDealdash } from "./state";
 
