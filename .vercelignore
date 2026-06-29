@@ -1,0 +1,7 @@
+data/imports/*.csv
+data/imports/*.tsv
+frontend/.next-app
+frontend/.next-webpack
+frontend/node_modules
+backend/node_modules
+node_modules
