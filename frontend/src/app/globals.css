@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f8ff;
+  --foreground: #132238;
+  --muted: #5f7089;
+  --card: rgba(255, 255, 255, 0.86);
+  --card-strong: rgba(255, 255, 255, 0.96);
+  --line: rgba(19, 34, 56, 0.12);
+  --accent: #0d9488;
+  --accent-strong: #155eef;
+  --accent-soft: rgba(21, 94, 239, 0.12);
+  --success: #15803d;
+  --warn: #d97706;
+  --danger: #dc2626;
+  --shadow: 0 24px 64px rgba(21, 42, 74, 0.14);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(13, 148, 136, 0.18), transparent 34%),
+    radial-gradient(circle at top right, rgba(21, 94, 239, 0.18), transparent 40%),
+    linear-gradient(180deg, #f7fbff 0%, #eef4ff 55%, #f4f8ff 100%);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(21, 94, 239, 0.16);
+}
+
+.glass-card {
+  background: var(--card);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: var(--shadow);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.surface-line {
+  border: 1px solid var(--line);
+}
+
+.field {
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid rgba(19, 34, 56, 0.12);
+  background: rgba(255, 255, 255, 0.86);
+  padding: 0.72rem 0.9rem;
+  color: var(--foreground);
+  outline: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.field:focus {
+  border-color: rgba(21, 94, 239, 0.38);
+  box-shadow: 0 0 0 4px rgba(21, 94, 239, 0.1);
+}
+
+.primary-button {
+  border-radius: 999px;
+  background: linear-gradient(135deg, #155eef 0%, #0d9488 100%);
+  color: white;
+  font-weight: 700;
+  padding: 0.82rem 1.15rem;
+  box-shadow: 0 14px 34px rgba(21, 94, 239, 0.24);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease;
+}
+
+.primary-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 40px rgba(21, 94, 239, 0.26);
+}
+
+.ghost-button {
+  border-radius: 999px;
+  border: 1px solid rgba(19, 34, 56, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 0.78rem 1rem;
+  font-weight: 600;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 1.5rem;
+}
+
+.app-grid {
+  display: grid;
+  gap: 1.25rem;
+}
+
+@media (min-width: 1024px) {
+  .app-grid {
+    grid-template-columns: minmax(248px, 280px) minmax(0, 1fr);
+    align-items: start;
+  }
+}

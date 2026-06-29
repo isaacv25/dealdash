@@ -1,0 +1,16 @@
+data/imports/*.csv
+data/imports/*.tsv
+frontend/.next/
+frontend/node_modules/
+backend/node_modules/
+node_modules/
+.dealdash-next-build/
+frontend/.next-app/
+frontend/.next-webpack/
+*.log
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+.DS_Store

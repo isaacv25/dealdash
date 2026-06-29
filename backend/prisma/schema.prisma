@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Merchant {
+  id           String         @id @default(cuid())
+  businessName String
+  contactName  String?
+  phone        String?
+  email        String?
+  city         String?
+  state        String?
+  notes        String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  fundedDeals  FundedDeal[]
+  pipelineDeals PipelineDeal[]
+  followUps    FollowUpItem[]
+}
+
+model FundedDeal {
+  id                   String   @id @default(cuid())
+  merchantId           String
+  merchant             Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  fundedDate           DateTime?
+  funder               String?
+  fundedAmount         Decimal?
+  factorRate           Decimal?
+  termValue            Int?
+  termUnit             String?
+  paymentAmount        Decimal?
+  paymentFrequency     String?
+  grossPayback         Decimal?
+  syndicationPercent   Decimal? @default(0)
+  pointsPercent        Decimal? @default(0)
+  commissionPercent    Decimal? @default(0)
+  commissionAmount     Decimal? @default(0)
+  clawbackAmount       Decimal? @default(0)
+  manualBalanceRemaining Decimal?
+  manualRenewalDate    DateTime?
+  statusRaw            String?
+  statusStage          String
+  notes                String?
+  sourceLabel          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model PipelineDeal {
+  id                 String   @id @default(cuid())
+  merchantId         String
+  merchant           Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  submittedDate      DateTime?
+  requestLabel       String?
+  requestedAmountMin Decimal?
+  requestedAmountMax Decimal?
+  statusRaw          String?
+  stage              String
+  notes              String?
+  sheetLabel         String?
+  nextFollowUpDate   DateTime?
+  sourceLabel        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model FollowUpItem {
+  id               String   @id @default(cuid())
+  merchantId       String?
+  merchant         Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  contactName      String?
+  businessName     String?
+  phone            String?
+  email            String?
+  requestLabel     String?
+  notes            String?
+  lastContactLabel String?
+  dueDate          DateTime?
+  priority         String?
+  appSubmitted     Boolean  @default(false)
+  completed        Boolean  @default(false)
+  sheetLabel       String?
+  sourceLabel      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ImportBatch {
+  id           String   @id @default(cuid())
+  filename     String
+  importType   String
+  uploadedAt   DateTime @default(now())
+  rowsImported Int
+  rowsSkipped  Int
+  notes        String?
+}
