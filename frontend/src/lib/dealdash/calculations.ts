@@ -63,11 +63,7 @@ export function grossPaybackFromDeal(deal: Pick<FundedDeal, "fundedAmount" | "fa
   return roundCurrency(deal.fundedAmount * deal.factorRate);
 }
 
-export function periodsForTerm(
-  termValue: number,
-  termUnit: TermUnit,
-  paymentFrequency: PaymentFrequency,
-) {
+export function periodsForTerm(termValue: number, termUnit: TermUnit, paymentFrequency: PaymentFrequency) {
   if (!termValue) return 0;
 
   if (paymentFrequency === "monthly") {
@@ -88,10 +84,7 @@ export function periodsForTerm(
 }
 
 export function periodicPaymentFromDeal(
-  deal: Pick<
-    FundedDeal,
-    "fundedAmount" | "factorRate" | "paymentAmount" | "paymentFrequency" | "termValue" | "termUnit"
-  >,
+  deal: Pick<FundedDeal, "fundedAmount" | "factorRate" | "paymentAmount" | "paymentFrequency" | "termValue" | "termUnit">,
 ) {
   if (deal.paymentAmount > 0) return deal.paymentAmount;
   const periods = periodsForTerm(deal.termValue, deal.termUnit, deal.paymentFrequency);
@@ -99,50 +92,77 @@ export function periodicPaymentFromDeal(
   return roundCurrency(grossPaybackFromDeal(deal) / periods);
 }
 
+/**
+ * Funded-progress math intentionally blends exact overrides with a conservative estimate.
+ * If the broker knows the live balance, that manual number wins. Otherwise we estimate the
+ * amount paid from funded date plus payment cadence so the dashboard can stay useful in between updates.
+ */
 export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
   const grossPayback = grossPaybackFromDeal(deal);
+  const periodicPayment = periodicPaymentFromDeal(deal);
+  const totalPeriods = periodsForTerm(deal.termValue, deal.termUnit, deal.paymentFrequency);
 
-  if (deal.manualBalanceRemaining !== undefined) {
+  if (deal.manualBalanceRemaining != undefined) {
     const paid = Math.max(0, grossPayback - deal.manualBalanceRemaining);
+    const estimatedPeriodsPaid = periodicPayment > 0 ? Math.min(totalPeriods, Math.round(paid / periodicPayment)) : 0;
     return {
       grossPayback,
+      periodicPayment,
+      totalPeriods,
+      completedPeriods: estimatedPeriodsPaid,
+      paymentsRemaining: Math.max(0, totalPeriods - estimatedPeriodsPaid),
+      paidAmount: roundCurrency(paid),
       balanceRemaining: roundCurrency(Math.max(0, deal.manualBalanceRemaining)),
       progressPercent: grossPayback ? Math.min(100, Math.round((paid / grossPayback) * 100)) : 0,
+      usesManualBalance: true,
     };
   }
 
   if (deal.statusStage === "paid-out") {
-    return { grossPayback, balanceRemaining: 0, progressPercent: 100 };
+    return {
+      grossPayback,
+      periodicPayment,
+      totalPeriods,
+      completedPeriods: totalPeriods,
+      paymentsRemaining: 0,
+      paidAmount: grossPayback,
+      balanceRemaining: 0,
+      progressPercent: 100,
+      usesManualBalance: false,
+    };
   }
 
   const fundedDate = deal.fundedDate ? new Date(deal.fundedDate) : undefined;
   if (!fundedDate || Number.isNaN(fundedDate.getTime())) {
     return {
       grossPayback,
+      periodicPayment,
+      totalPeriods,
+      completedPeriods: 0,
+      paymentsRemaining: totalPeriods,
+      paidAmount: 0,
       balanceRemaining: grossPayback,
       progressPercent: 0,
+      usesManualBalance: false,
     };
   }
 
-  const elapsedDays = Math.max(
-    0,
-    Math.floor((now.getTime() - fundedDate.getTime()) / (1000 * 60 * 60 * 24)),
-  );
-
-  const completedPeriods = (() => {
-    if (deal.paymentFrequency === "daily") return elapsedDays;
-    if (deal.paymentFrequency === "weekly") return Math.floor(elapsedDays / 7);
-    return Math.floor(elapsedDays / 30);
-  })();
-
-  const totalPeriods = periodsForTerm(deal.termValue, deal.termUnit, deal.paymentFrequency);
-  const paid = Math.min(grossPayback, periodicPaymentFromDeal(deal) * Math.min(totalPeriods, completedPeriods));
-  const balanceRemaining = roundCurrency(Math.max(0, grossPayback - paid));
+  const elapsedDays = Math.max(0, Math.floor((now.getTime() - fundedDate.getTime()) / (1000 * 60 * 60 * 24)));
+  const completedPeriods = deal.paymentFrequency === "daily" ? elapsedDays : deal.paymentFrequency === "weekly" ? Math.floor(elapsedDays / 7) : Math.floor(elapsedDays / 30);
+  const boundedPeriods = Math.min(totalPeriods, completedPeriods);
+  const paidAmount = Math.min(grossPayback, periodicPayment * boundedPeriods);
+  const balanceRemaining = roundCurrency(Math.max(0, grossPayback - paidAmount));
 
   return {
     grossPayback,
+    periodicPayment,
+    totalPeriods,
+    completedPeriods: boundedPeriods,
+    paymentsRemaining: Math.max(0, totalPeriods - boundedPeriods),
+    paidAmount: roundCurrency(paidAmount),
     balanceRemaining,
-    progressPercent: totalPeriods ? Math.min(100, Math.round((completedPeriods / totalPeriods) * 100)) : 0,
+    progressPercent: grossPayback ? Math.min(100, Math.round((paidAmount / grossPayback) * 100)) : 0,
+    usesManualBalance: false,
   };
 }
 

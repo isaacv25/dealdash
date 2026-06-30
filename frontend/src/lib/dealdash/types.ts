@@ -1,5 +1,6 @@
 export type PaymentFrequency = "daily" | "weekly" | "monthly";
 export type TermUnit = "days" | "weeks" | "months";
+export type CommissionStatus = "pending" | "paid-out" | "clawback";
 export type PipelineStage =
   | "new-lead"
   | "submitted"
@@ -27,12 +28,10 @@ export interface FundedDeal {
   paymentFrequency: PaymentFrequency;
   syndicationPercent: number;
   pointsPercent: number;
-  // House points % = what the ISO/house earns on funded amount (e.g. 0.09 = 9 pts)
   housePointsPercent: number;
-  // Broker split % = what fraction of house points the broker receives
   commissionPercent: number;
-  // Computed or manually set commission dollar amount
   commissionAmount: number;
+  commissionStatus: CommissionStatus;
   clawbackAmount: number;
   statusRaw: string;
   statusStage: "active" | "paid-out" | "clawback" | "slow-pay" | "watch";
@@ -95,5 +94,14 @@ export interface SeedDataset {
   pipelineDeals: PipelineDeal[];
   followUps: FollowUpItem[];
   importBatches: ImportBatch[];
-  sourceMode: "csv" | "sample";
+  sourceMode: "csv" | "sample" | "database";
+}
+
+export interface ViewerProfile {
+  userId: string;
+  username: string;
+  firstName: string;
+  lastName: string;
+  companyName: string;
+  hideFinancialsByDefault: boolean;
 }

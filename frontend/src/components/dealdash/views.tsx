@@ -52,6 +52,14 @@ function formatCurrency(value?: number) {
   return currencyFormatter.format(value || 0);
 }
 
+function hiddenCurrency(showFinancials: boolean, value?: number) {
+  return showFinancials ? formatCurrency(value) : "Hidden";
+}
+
+function financeBlur(showFinancials: boolean) {
+  return showFinancials ? "" : "blur-[8px] pointer-events-none select-none";
+}
+
 function formatNumber(value?: number) {
   return numberFormatter.format(value || 0);
 }
@@ -147,29 +155,6 @@ function MetricCard({
  * Visual progress bar for a funded deal.
  * percent: 0–100
  */
-function ProgressBar({ percent, stage }: { percent: number; stage: FundedDeal["statusStage"] }) {
-  const color =
-    stage === "paid-out"
-      ? "bg-[var(--success)]"
-      : stage === "clawback"
-        ? "bg-[var(--danger)]"
-        : stage === "slow-pay"
-          ? "bg-[var(--warn)]"
-          : "bg-[var(--accent-strong)]";
-
-  return (
-    <div className="mt-1">
-      <div className="progress-track">
-        <div
-          className={`progress-fill ${color}`}
-          style={{ width: `${Math.min(100, percent)}%` }}
-        />
-      </div>
-      <p className="mt-1 text-xs text-[var(--muted)]">{percent}% paid</p>
-    </div>
-  );
-}
-
 /** Colored dot + text badge for a funded deal's status stage. */
 function StatusBadge({ stage }: { stage: FundedDeal["statusStage"] }) {
   const config = {
@@ -191,7 +176,7 @@ function StatusBadge({ stage }: { stage: FundedDeal["statusStage"] }) {
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export function DashboardView() {
-  const { data } = useDealdash();
+  const { data, showFinancials } = useDealdash();
   const [today] = useState(() => Date.now());
 
   const metrics = useMemo(() => {
@@ -265,17 +250,17 @@ export function DashboardView() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Funded Volume"
-          value={formatCurrency(metrics.fundedVolume)}
+          value={hiddenCurrency(showFinancials, metrics.fundedVolume)}
           detail={`${metrics.fundedCount} funded files on the board`}
         />
         <MetricCard
           label="Gross Payback"
-          value={formatCurrency(metrics.grossPayback)}
-          detail={`Remaining balance ${formatCurrency(metrics.remaining)}`}
+          value={hiddenCurrency(showFinancials, metrics.grossPayback)}
+          detail={showFinancials ? `Remaining balance ${formatCurrency(metrics.remaining)}` : "Remaining balance hidden"}
         />
         <MetricCard
           label="Commission Book"
-          value={formatCurrency(metrics.commission)}
+          value={hiddenCurrency(showFinancials, metrics.commission)}
           detail={`${metrics.upcomingRenewals} renewals approaching`}
         />
         <MetricCard
@@ -408,7 +393,7 @@ function DealField({
 }
 
 export function FundedProgressView() {
-  const { data, addFundedDeal, updateFundedDeal, deleteFundedDeal } = useDealdash();
+  const { data, showFinancials, addFundedDeal, updateFundedDeal, deleteFundedDeal } = useDealdash();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
 
@@ -472,7 +457,6 @@ export function FundedProgressView() {
                 ["Business", "Contact", "Funder", "Funded", "Rate", "Term", "Freq", "Payment", "House Pts%", "Broker Split%", "Commission$", "Payback", "Balance", "Status"],
                 filteredDeals.map((deal) => {
                   const progress = progressForFundedDeal(deal);
-                  const houseAmt = deal.fundedAmount * deal.housePointsPercent;
                   return [
                     deal.businessName, deal.contactName, deal.funder || "",
                     String(deal.fundedAmount), String(deal.factorRate),
@@ -565,7 +549,7 @@ export function FundedProgressView() {
                     Payback Progress
                   </span>
                   <span className="text-xs text-[var(--muted)]">
-                    {formatCurrency(balance)} remaining of {formatCurrency(payback > 0 ? payback : deal.fundedAmount)}
+                    {showFinancials ? `${formatCurrency(balance)} remaining of ${formatCurrency(payback > 0 ? payback : deal.fundedAmount)}` : "Remaining balance hidden"}
                   </span>
                 </div>
                 <div className="progress-track" style={{ height: "10px" }}>
@@ -585,7 +569,7 @@ export function FundedProgressView() {
               </div>
 
               {/* ── Deal economics ── */}
-              <div className="px-5 pt-4">
+              <div className={`px-5 pt-4 ${financeBlur(showFinancials)}`}>
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
                   Deal Economics
                 </p>
@@ -665,11 +649,11 @@ export function FundedProgressView() {
               </div>
 
               {/* ── Commission model ── */}
-              <div className="px-5 pt-4">
+              <div className={`px-5 pt-4 ${financeBlur(showFinancials)}`}>
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
                   Commission Model
                 </p>
-                <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+                <div className="grid gap-3 grid-cols-2 sm:grid-cols-5">
                   <DealField label="House Pts %">
                     <input
                       className="field w-full text-sm"
@@ -682,9 +666,9 @@ export function FundedProgressView() {
                       placeholder="e.g. 9"
                     />
                   </DealField>
-                  <DealField label={`House Pts $ ${houseAmt > 0 ? `(${formatCurrency(houseAmt)})` : ""}`}>
+                  <DealField label={`House Pts $ ${showFinancials && houseAmt > 0 ? `(${formatCurrency(houseAmt)})` : ""}`}>
                     <div className="field w-full flex items-center text-sm font-semibold bg-[var(--accent-soft)] border-[var(--accent-strong)]/20 text-[var(--accent-strong)]">
-                      {houseAmt > 0 ? formatCurrency(houseAmt) : <span className="text-[var(--muted)] font-normal">Set house pts %</span>}
+                      {showFinancials ? (houseAmt > 0 ? formatCurrency(houseAmt) : <span className="text-[var(--muted)] font-normal">Set house pts %</span>) : <span className="text-[var(--muted)] font-normal">Hidden</span>}
                     </div>
                   </DealField>
                   <DealField label="Broker Split %">
@@ -714,7 +698,7 @@ export function FundedProgressView() {
               </div>
 
               {/* ── Other fields ── */}
-              <div className="px-5 pt-4 pb-5">
+              <div className={`px-5 pt-4 pb-5 ${financeBlur(showFinancials)}`}>
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
                   Additional
                 </p>
@@ -755,6 +739,19 @@ export function FundedProgressView() {
                         })
                       }
                     />
+                  </DealField>
+                  <DealField label="Commission Status">
+                    <select
+                      className="field w-full text-sm"
+                      value={deal.commissionStatus}
+                      onChange={(e) =>
+                        updateFundedDeal(deal.id, { commissionStatus: e.target.value as FundedDeal["commissionStatus"] })
+                      }
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="paid-out">Paid Out</option>
+                      <option value="clawback">Clawback</option>
+                    </select>
                   </DealField>
                   <DealField label="Notes">
                     <input
@@ -813,7 +810,7 @@ export function PipelineView() {
     <SectionFrame
       eyebrow="Deals Brought In"
       title="Pipeline board"
-      copy="Filter by stage, update status, and keep every file moving. All changes persist to your browser."
+      copy="Filter by stage, update status, and keep every file moving. All changes persist to your company workspace."
       actions={
         <div className="flex flex-wrap gap-3">
           <input
@@ -1152,6 +1149,7 @@ export function FollowUpsView() {
 // ─── Rate Calculator ──────────────────────────────────────────────────────────
 
 export function RateCalculatorView() {
+  const { showFinancials } = useDealdash();
   const [scenario, setScenario] = useState({
     fundedAmount: 50000,
     factorRate: 1.38,
@@ -1252,23 +1250,23 @@ export function RateCalculatorView() {
           <div className="mt-4 grid gap-3">
             <MetricCard
               label="Gross payback"
-              value={formatCurrency(grossPayback)}
+              value={hiddenCurrency(showFinancials, grossPayback)}
               detail="Funded amount × factor rate"
             />
             <MetricCard
               label="Periodic payment"
-              value={formatCurrency(periodicPayment)}
+              value={hiddenCurrency(showFinancials, periodicPayment)}
               detail={`${scenario.paymentFrequency} payment estimate`}
             />
             <MetricCard
               label="Syndication out"
-              value={formatCurrency(syndicationAmount)}
+              value={hiddenCurrency(showFinancials, syndicationAmount)}
               detail={formatPercent(scenario.syndicationPercent)}
             />
             <MetricCard
               label="Net broker proceeds"
-              value={formatCurrency(netBrokerProceeds)}
-              detail={`Commission ${formatCurrency(commissionIncome)} + points ${formatCurrency(pointsIncome)}`}
+              value={hiddenCurrency(showFinancials, netBrokerProceeds)}
+              detail={showFinancials ? `Commission ${formatCurrency(commissionIncome)} + points ${formatCurrency(pointsIncome)}` : "Commission and points hidden"}
             />
           </div>
         </div>

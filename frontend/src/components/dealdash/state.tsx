@@ -1,12 +1,27 @@
 "use client";
 
-import { createContext, startTransition, useContext, useEffect, useEffectEvent, useState } from "react";
-import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset } from "@/lib/dealdash";
-
-const STORAGE_KEY = "dealdash-browser-state-v2";
+import { createContext, startTransition, useContext, useState } from "react";
+import {
+  createFollowUpAction,
+  createFundedDealAction,
+  createPipelineDealAction,
+  deleteFollowUpAction,
+  deleteFundedDealAction,
+  deletePipelineDealAction,
+  importWorkspaceDataAction,
+  resetWorkspaceAction,
+  updateFinancialVisibilityAction,
+  updateFollowUpAction,
+  updateFundedDealAction,
+  updatePipelineDealAction,
+} from "@/app/(app)/actions";
+import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset, ViewerProfile } from "@/lib/dealdash";
 
 interface DealdashContextValue {
   data: SeedDataset;
+  viewer: ViewerProfile;
+  showFinancials: boolean;
+  toggleFinancials: () => void;
   addFundedDeal: () => void;
   updateFundedDeal: (id: string, patch: Partial<FundedDeal>) => void;
   deleteFundedDeal: (id: string) => void;
@@ -16,180 +31,113 @@ interface DealdashContextValue {
   addFollowUp: () => void;
   updateFollowUp: (id: string, patch: Partial<FollowUpItem>) => void;
   deleteFollowUp: (id: string) => void;
-  importData: (payload: {
-    fundedDeals: FundedDeal[];
-    pipelineDeals: PipelineDeal[];
-    followUps: FollowUpItem[];
-    batch: ImportBatch;
-  }) => void;
+  importData: (payload: { fundedDeals: FundedDeal[]; pipelineDeals: PipelineDeal[]; followUps: FollowUpItem[]; batch: ImportBatch }) => void;
   resetToSeed: () => void;
 }
 
 const DealdashContext = createContext<DealdashContextValue | null>(null);
 
-function mergeById<T extends { id: string }>(current: T[], incoming: T[]) {
-  const map = new Map(current.map((item) => [item.id, item]));
-  for (const item of incoming) {
-    map.set(item.id, item);
-  }
-  return Array.from(map.values());
+function logPersistFailure(scope: string, error: unknown) {
+  console.error(`DealDash failed to persist ${scope}`, error);
 }
 
-function createBlankFundedDeal(): FundedDeal {
-  const now = new Date().toISOString();
-  return {
-    id: `funded-manual-${Date.now()}`,
-    businessName: "New funded deal",
-    contactName: "Brokered contact",
-    fundedDate: now,
-    fundedAmount: 0,
-    factorRate: 1.35,
-    termValue: 24,
-    termUnit: "weeks",
-    paymentAmount: 0,
-    paymentFrequency: "weekly",
-    syndicationPercent: 0,
-    pointsPercent: 0,
-    housePointsPercent: 0,
-    commissionPercent: 0.3, // default 30% broker split
-    commissionAmount: 0,
-    clawbackAmount: 0,
-    statusRaw: "Active",
-    statusStage: "active",
-    notes: "",
-    sourceLabel: "manual",
-  };
-}
-
-function createBlankPipelineDeal(): PipelineDeal {
-  return {
-    id: `pipeline-manual-${Date.now()}`,
-    contactName: "New lead",
-    businessName: "Untitled business",
-    requestLabel: "",
-    statusRaw: "New Lead",
-    stage: "new-lead",
-    notes: "",
-    sheetLabel: "",
-    sourceLabel: "manual",
-  };
-}
-
-function createBlankFollowUp(): FollowUpItem {
-  return {
-    id: `follow-up-manual-${Date.now()}`,
-    contactName: "Follow-up lead",
-    businessName: "Untitled business",
-    requestLabel: "",
-    notes: "",
-    lastContactLabel: "",
-    priority: "medium",
-    appSubmitted: false,
-    completed: false,
-    sheetLabel: "",
-    sourceLabel: "manual",
-  };
-}
-
-export function DealdashProvider({
-  initialData,
-  children,
-}: Readonly<{
-  initialData: SeedDataset;
-  children: React.ReactNode;
-}>) {
-  const [data, setData] = useState<SeedDataset>(() => {
-    if (typeof window === "undefined") return initialData;
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return initialData;
-
-    try {
-      return JSON.parse(raw) as SeedDataset;
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
-      return initialData;
-    }
-  });
-
-  const persistState = useEffectEvent((nextData: SeedDataset) => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextData));
-  });
-
-  useEffect(() => {
-    persistState(data);
-  }, [data]);
+export function DealdashProvider({ initialData, viewer, children }: Readonly<{ initialData: SeedDataset; viewer: ViewerProfile; children: React.ReactNode }>) {
+  const [data, setData] = useState<SeedDataset>(initialData);
+  const [viewerState, setViewerState] = useState<ViewerProfile>(viewer);
+  const [showFinancials, setShowFinancials] = useState<boolean>(() => !viewer.hideFinancialsByDefault);
 
   const value: DealdashContextValue = {
     data,
+    viewer: viewerState,
+    showFinancials,
+    toggleFinancials() {
+      const nextHidden = showFinancials;
+      setShowFinancials(!showFinancials);
+      startTransition(() => {
+        void updateFinancialVisibilityAction(nextHidden)
+          .then((updatedViewer) => setViewerState(updatedViewer))
+          .catch((error) => {
+            setShowFinancials(showFinancials);
+            logPersistFailure("financial visibility", error);
+          });
+      });
+    },
     addFundedDeal() {
-      setData((current) => ({
-        ...current,
-        fundedDeals: [createBlankFundedDeal(), ...current.fundedDeals],
-      }));
+      startTransition(() => {
+        void createFundedDealAction()
+          .then((created) => setData((current) => ({ ...current, fundedDeals: [created, ...current.fundedDeals] })))
+          .catch((error) => logPersistFailure("funded deal creation", error));
+      });
     },
     updateFundedDeal(id, patch) {
-      setData((current) => ({
-        ...current,
-        fundedDeals: current.fundedDeals.map((deal) => (deal.id === id ? { ...deal, ...patch } : deal)),
-      }));
+      setData((current) => ({ ...current, fundedDeals: current.fundedDeals.map((deal) => (deal.id === id ? { ...deal, ...patch } : deal)) }));
+      startTransition(() => {
+        void updateFundedDealAction(id, patch)
+          .then((saved) => setData((current) => ({ ...current, fundedDeals: current.fundedDeals.map((deal) => (deal.id === id ? saved : deal)) })))
+          .catch((error) => logPersistFailure("funded deal update", error));
+      });
     },
     deleteFundedDeal(id) {
-      setData((current) => ({
-        ...current,
-        fundedDeals: current.fundedDeals.filter((deal) => deal.id !== id),
-      }));
+      setData((current) => ({ ...current, fundedDeals: current.fundedDeals.filter((deal) => deal.id !== id) }));
+      startTransition(() => {
+        void deleteFundedDealAction(id).catch((error) => logPersistFailure("funded deal delete", error));
+      });
     },
     addPipelineDeal() {
-      setData((current) => ({
-        ...current,
-        pipelineDeals: [createBlankPipelineDeal(), ...current.pipelineDeals],
-      }));
+      startTransition(() => {
+        void createPipelineDealAction()
+          .then((created) => setData((current) => ({ ...current, pipelineDeals: [created, ...current.pipelineDeals] })))
+          .catch((error) => logPersistFailure("pipeline deal creation", error));
+      });
     },
     updatePipelineDeal(id, patch) {
-      setData((current) => ({
-        ...current,
-        pipelineDeals: current.pipelineDeals.map((deal) => (deal.id === id ? { ...deal, ...patch } : deal)),
-      }));
+      setData((current) => ({ ...current, pipelineDeals: current.pipelineDeals.map((deal) => (deal.id === id ? { ...deal, ...patch } : deal)) }));
+      startTransition(() => {
+        void updatePipelineDealAction(id, patch)
+          .then((saved) => setData((current) => ({ ...current, pipelineDeals: current.pipelineDeals.map((deal) => (deal.id === id ? saved : deal)) })))
+          .catch((error) => logPersistFailure("pipeline deal update", error));
+      });
     },
     deletePipelineDeal(id) {
-      setData((current) => ({
-        ...current,
-        pipelineDeals: current.pipelineDeals.filter((deal) => deal.id !== id),
-      }));
+      setData((current) => ({ ...current, pipelineDeals: current.pipelineDeals.filter((deal) => deal.id !== id) }));
+      startTransition(() => {
+        void deletePipelineDealAction(id).catch((error) => logPersistFailure("pipeline deal delete", error));
+      });
     },
     addFollowUp() {
-      setData((current) => ({
-        ...current,
-        followUps: [createBlankFollowUp(), ...current.followUps],
-      }));
+      startTransition(() => {
+        void createFollowUpAction()
+          .then((created) => setData((current) => ({ ...current, followUps: [created, ...current.followUps] })))
+          .catch((error) => logPersistFailure("follow-up creation", error));
+      });
     },
     updateFollowUp(id, patch) {
-      setData((current) => ({
-        ...current,
-        followUps: current.followUps.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-      }));
+      setData((current) => ({ ...current, followUps: current.followUps.map((item) => (item.id === id ? { ...item, ...patch } : item)) }));
+      startTransition(() => {
+        void updateFollowUpAction(id, patch)
+          .then((saved) => setData((current) => ({ ...current, followUps: current.followUps.map((item) => (item.id === id ? saved : item)) })))
+          .catch((error) => logPersistFailure("follow-up update", error));
+      });
     },
     deleteFollowUp(id) {
-      setData((current) => ({
-        ...current,
-        followUps: current.followUps.filter((item) => item.id !== id),
-      }));
+      setData((current) => ({ ...current, followUps: current.followUps.filter((item) => item.id !== id) }));
+      startTransition(() => {
+        void deleteFollowUpAction(id).catch((error) => logPersistFailure("follow-up delete", error));
+      });
     },
     importData(payload) {
       startTransition(() => {
-        setData((current) => ({
-          ...current,
-          fundedDeals: mergeById(current.fundedDeals, payload.fundedDeals),
-          pipelineDeals: mergeById(current.pipelineDeals, payload.pipelineDeals),
-          followUps: mergeById(current.followUps, payload.followUps),
-          importBatches: [payload.batch, ...current.importBatches],
-          sourceMode: current.sourceMode,
-        }));
+        void importWorkspaceDataAction(payload)
+          .then((snapshot) => setData(snapshot))
+          .catch((error) => logPersistFailure("csv import", error));
       });
     },
     resetToSeed() {
-      window.localStorage.removeItem(STORAGE_KEY);
-      setData(initialData);
+      startTransition(() => {
+        void resetWorkspaceAction()
+          .then((snapshot) => setData(snapshot))
+          .catch((error) => logPersistFailure("workspace reset", error));
+      });
     },
   };
 
@@ -198,8 +146,6 @@ export function DealdashProvider({
 
 export function useDealdash() {
   const context = useContext(DealdashContext);
-  if (!context) {
-    throw new Error("useDealdash must be used inside DealdashProvider");
-  }
+  if (!context) throw new Error("useDealdash must be used inside DealdashProvider");
   return context;
 }

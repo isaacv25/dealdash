@@ -493,6 +493,7 @@ function fd(
     housePointsPercent: 0, // broker sets this per deal
     commissionPercent,
     commissionAmount,
+    commissionStatus: statusStage === "clawback" ? "clawback" : statusStage === "paid-out" ? "paid-out" : "pending",
     clawbackAmount: statusStage === "clawback" ? Math.abs(commissionAmount) : 0,
     statusRaw: statusRaw || (statusStage === "active" ? "Active" : statusStage === "paid-out" ? "Paid Out" : statusStage === "clawback" ? "Clawback" : statusStage === "slow-pay" ? "Slow Pay" : "Watch"),
     statusStage,

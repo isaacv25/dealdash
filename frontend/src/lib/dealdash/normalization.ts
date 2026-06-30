@@ -60,7 +60,7 @@ function stageFromRawStatus(rawStatus: string): PipelineStage {
   if (!normalized || normalized.includes("did not submit")) return "new-lead";
   if (normalized.includes("submitted")) return "submitted";
   if (normalized.includes("pending review") || normalized.includes("being shopped") || normalized.includes("pending statements")) return "in-review";
-  if (normalized.includes("offer")) return "approved";
+  if (normalized.includes("offer") || normalized.includes("limitless offer")) return "approved";
   if (normalized.includes("contract")) return "contract-out";
   if (normalized.includes("funded")) return "funded";
   if (normalized.includes("renew")) return "renewal";
@@ -83,16 +83,20 @@ function splitCityState(value: string) {
   return { city, state };
 }
 
+/**
+ * CSV normalization deliberately preserves the sheet's raw labels while also mapping them into
+ * canonical app stages. That gives us reliable filters without losing the wording the broker saw.
+ */
 export function normalizeFundedRow(row: Record<string, string>, sourceLabel: string, index: number): FundedDeal {
   const parsed = fundedSchema.parse(row);
   const termUnitRaw = parsed["Term Unit"].trim().toLowerCase();
-  const termUnit =
-    termUnitRaw.startsWith("day") ? "days" : termUnitRaw.startsWith("month") ? "months" : "weeks";
+  const termUnit = termUnitRaw.startsWith("day") ? "days" : termUnitRaw.startsWith("month") ? "months" : "weeks";
   const paymentFrequency = termUnit === "days" ? "daily" : termUnit === "months" ? "monthly" : "weekly";
   const fundedAmount = parseCurrency(parsed.Amount);
   const factorRate = Number.parseFloat(parsed.Rate || "0") || 1;
   const commissionAmount = parseCurrency(parsed.Commission);
   const commissionPercent = fundedAmount > 0 && commissionAmount > 0 ? commissionAmount / fundedAmount : 0;
+  const statusStage = fundedStageFromRawStatus(parsed.Status);
 
   return {
     id: createId("funded", parsed["Business Name"] || parsed.Name || sourceLabel, index),
@@ -110,12 +114,13 @@ export function normalizeFundedRow(row: Record<string, string>, sourceLabel: str
     paymentFrequency,
     syndicationPercent: parsePercent(parsed.Syndication),
     pointsPercent: 0,
-    housePointsPercent: 0, // not in CSV — user sets per deal
+    housePointsPercent: 0,
     commissionPercent,
     commissionAmount,
-    clawbackAmount: 0,
+    commissionStatus: statusStage === "clawback" ? "clawback" : statusStage === "paid-out" ? "paid-out" : "pending",
+    clawbackAmount: statusStage === "clawback" ? Math.abs(commissionAmount) : 0,
     statusRaw: parsed.Status || "Active",
-    statusStage: fundedStageFromRawStatus(parsed.Status),
+    statusStage,
     notes: "",
     sourceLabel,
   };
