@@ -118,20 +118,6 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
     };
   }
 
-  if (deal.statusStage === "paid-out") {
-    return {
-      grossPayback,
-      periodicPayment,
-      totalPeriods,
-      completedPeriods: totalPeriods,
-      paymentsRemaining: 0,
-      paidAmount: grossPayback,
-      balanceRemaining: 0,
-      progressPercent: 100,
-      usesManualBalance: false,
-    };
-  }
-
   const fundedDate = deal.fundedDate ? new Date(deal.fundedDate) : undefined;
   if (!fundedDate || Number.isNaN(fundedDate.getTime())) {
     return {

@@ -582,7 +582,9 @@ export function FundedProgressView() {
                   />
                 </div>
                 <p className="mt-1 text-xs text-[var(--muted)]">
-                  {progress.progressPercent}% paid
+                  {progress.totalPeriods > 0
+                    ? `${progress.completedPeriods} of ${progress.totalPeriods} payments complete - ${progress.paymentsRemaining} remaining`
+                    : `${progress.progressPercent}% paid`}
                 </p>
               </div>
 
