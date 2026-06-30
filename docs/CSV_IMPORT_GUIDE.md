@@ -1,6 +1,6 @@
 # CSV Import Guide
 
-Dealdash recognizes three main import families based on the sheet formats used in the current workflow:
+DealDash still recognizes the three spreadsheet families used in the current workflow, but imports now persist into Postgres instead of only merging into browser memory.
 
 ## Supported CSV types
 
@@ -54,14 +54,21 @@ Expected headers include:
 - `Date Last Contacted`
 - `Sheet`
 
-## Normalization rules
+## Normalization behavior
 
-- Money strings like `$60,000.00` are converted into numbers.
-- Requests like `25-40k` are stored as a min/max range.
-- Percent strings like `10%` are converted to decimal percentages for calculations.
-- Missing fields are tolerated and surfaced in import summaries.
-- Raw statuses are preserved while also being mapped to canonical pipeline stages.
+- Currency strings are converted into numeric values.
+- Request ranges such as `25-40k` are stored as min/max numbers.
+- Percent strings become decimal percentages.
+- Raw status text is preserved while canonical stages are mapped for UI filters.
+- Funded rows now also infer an initial `commissionStatus` from the imported status text.
 
-## Local workflow
+## Dedupe behavior
 
-Drop source CSVs into [`data/imports`](/C:/Users/19178/OneDrive/Desktop/Ethan%20Fishman/Projects/dealdash/data/imports) for local seed loading. Those files are intentionally git-ignored to avoid committing private merchant data.
+- Preview parsing happens in the browser.
+- Import persistence happens on the server.
+- The server company-scopes each normalized row key before saving it.
+- Re-importing the same file for the same company updates rows instead of duplicating them.
+
+## Manual entry alongside CSV imports
+
+Manual entries and imported entries share the same tables. Imported rows usually keep `sourceLabel` tied to the file name; manual rows use `manual` so future sessions can distinguish between seeded/imported data and hand-entered edits.

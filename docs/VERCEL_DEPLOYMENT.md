@@ -1,18 +1,37 @@
 # Vercel Deployment
 
-## Current deployment profile
+## Target project
 
-The frontend in [`frontend`](/C:/Users/19178/OneDrive/Desktop/Ethan%20Fishman/Projects/dealdash/frontend) is ready to deploy to Vercel as a Next.js App Router project.
+- Vercel team: `LetsBuildIV`
+- Vercel project: `dealdash`
+- Expected production URL: `https://dealdash-flax.vercel.app`
 
-## Recommended setup
+## Required environment variables
 
-1. Create a Vercel project rooted at `frontend/`.
-2. Add the environment variables from `.env.example`.
-3. Set a real `ADMIN_PASSWORD` and `SESSION_SECRET`.
-4. For production persistence across devices, connect a dedicated Postgres database and wire the Prisma schema in `backend/prisma/schema.prisma`.
+Add these in the Vercel project before using the database-backed build:
 
-## Notes
+- `DATABASE_URL`: Postgres connection string for Prisma and all workspace persistence
+- `SESSION_SECRET`: long random secret used to hash session tokens
 
-- In the current MVP, edits and imports are stored in browser local storage.
-- If no CSVs exist in `data/imports`, the app falls back to bundled sample data.
-- `outputFileTracingRoot` is configured so the frontend can safely read the shared backend package and repo-level data files during local development and build.
+## Build and database requirements
+
+The frontend runs Prisma generate during install/build using the schema at `backend/prisma/schema.prisma`.
+
+Before or immediately after the first production deploy, make sure the database schema exists:
+
+```powershell
+cd frontend
+pnpm prisma:push
+```
+
+If you prefer migrations later, replace `prisma:push` with a normal Prisma migration workflow.
+
+## Production behavior
+
+- Auth, sessions, and all workspace mutations are server-side.
+- The first account created in a fresh environment receives the bundled legacy seed dataset.
+- Later accounts start with empty workspaces unless they import CSVs.
+
+## What blocks production if setup is incomplete
+
+If `DATABASE_URL` or `SESSION_SECRET` is missing, the deployment can still build but the app cannot be used correctly at runtime. Login, signup, and workspace loads will fail until those variables are added.
