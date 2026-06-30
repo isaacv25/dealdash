@@ -9,10 +9,13 @@ interface DealdashContextValue {
   data: SeedDataset;
   addFundedDeal: () => void;
   updateFundedDeal: (id: string, patch: Partial<FundedDeal>) => void;
+  deleteFundedDeal: (id: string) => void;
   addPipelineDeal: () => void;
   updatePipelineDeal: (id: string, patch: Partial<PipelineDeal>) => void;
+  deletePipelineDeal: (id: string) => void;
   addFollowUp: () => void;
   updateFollowUp: (id: string, patch: Partial<FollowUpItem>) => void;
+  deleteFollowUp: (id: string) => void;
   importData: (payload: {
     fundedDeals: FundedDeal[];
     pipelineDeals: PipelineDeal[];
@@ -129,6 +132,12 @@ export function DealdashProvider({
         fundedDeals: current.fundedDeals.map((deal) => (deal.id === id ? { ...deal, ...patch } : deal)),
       }));
     },
+    deleteFundedDeal(id) {
+      setData((current) => ({
+        ...current,
+        fundedDeals: current.fundedDeals.filter((deal) => deal.id !== id),
+      }));
+    },
     addPipelineDeal() {
       setData((current) => ({
         ...current,
@@ -141,6 +150,12 @@ export function DealdashProvider({
         pipelineDeals: current.pipelineDeals.map((deal) => (deal.id === id ? { ...deal, ...patch } : deal)),
       }));
     },
+    deletePipelineDeal(id) {
+      setData((current) => ({
+        ...current,
+        pipelineDeals: current.pipelineDeals.filter((deal) => deal.id !== id),
+      }));
+    },
     addFollowUp() {
       setData((current) => ({
         ...current,
@@ -151,6 +166,12 @@ export function DealdashProvider({
       setData((current) => ({
         ...current,
         followUps: current.followUps.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      }));
+    },
+    deleteFollowUp(id) {
+      setData((current) => ({
+        ...current,
+        followUps: current.followUps.filter((item) => item.id !== id),
       }));
     },
     importData(payload) {

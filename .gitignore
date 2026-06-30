@@ -1,5 +1,6 @@
-data/imports/*.csv
-data/imports/*.tsv
+# CSV seed files are committed intentionally so Vercel can bundle them
+# data/imports/*.csv
+# data/imports/*.tsv
 frontend/.next/
 frontend/node_modules/
 backend/node_modules/
