@@ -27,7 +27,11 @@ export interface FundedDeal {
   paymentFrequency: PaymentFrequency;
   syndicationPercent: number;
   pointsPercent: number;
+  // House points % = what the ISO/house earns on funded amount (e.g. 0.09 = 9 pts)
+  housePointsPercent: number;
+  // Broker split % = what fraction of house points the broker receives
   commissionPercent: number;
+  // Computed or manually set commission dollar amount
   commissionAmount: number;
   clawbackAmount: number;
   statusRaw: string;

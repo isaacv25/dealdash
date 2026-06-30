@@ -110,6 +110,7 @@ export function normalizeFundedRow(row: Record<string, string>, sourceLabel: str
     paymentFrequency,
     syndicationPercent: parsePercent(parsed.Syndication),
     pointsPercent: 0,
+    housePointsPercent: 0, // not in CSV — user sets per deal
     commissionPercent,
     commissionAmount,
     clawbackAmount: 0,

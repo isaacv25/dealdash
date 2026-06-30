@@ -3,7 +3,7 @@
 import { createContext, startTransition, useContext, useEffect, useEffectEvent, useState } from "react";
 import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset } from "@/lib/dealdash";
 
-const STORAGE_KEY = "dealdash-browser-state-v1";
+const STORAGE_KEY = "dealdash-browser-state-v2";
 
 interface DealdashContextValue {
   data: SeedDataset;
@@ -50,7 +50,8 @@ function createBlankFundedDeal(): FundedDeal {
     paymentFrequency: "weekly",
     syndicationPercent: 0,
     pointsPercent: 0,
-    commissionPercent: 0.05,
+    housePointsPercent: 0,
+    commissionPercent: 0.3, // default 30% broker split
     commissionAmount: 0,
     clawbackAmount: 0,
     statusRaw: "Active",
