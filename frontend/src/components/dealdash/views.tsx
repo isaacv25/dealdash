@@ -22,7 +22,7 @@ import {
   renewalDateForFundedDeal,
 } from "@/lib/dealdash";
 import type { FollowUpItem, FundedDeal, ImportBatch, PipelineStage } from "@/lib/dealdash";
-import { CalendarClock, Download, Plus, Trash2, Upload } from "lucide-react";
+import { CalendarClock, Copy, Download, Plus, Trash2, Upload } from "lucide-react";
 import { useDealdash } from "./state";
 
 // ─── formatters ──────────────────────────────────────────────────────────────
@@ -56,10 +56,6 @@ function hiddenCurrency(showFinancials: boolean, value?: number) {
   return showFinancials ? formatCurrency(value) : "Hidden";
 }
 
-function financeBlur(showFinancials: boolean) {
-  return showFinancials ? "" : "blur-[8px] pointer-events-none select-none";
-}
-
 function formatNumber(value?: number) {
   return numberFormatter.format(value || 0);
 }
@@ -77,7 +73,17 @@ function formatDate(value?: string) {
 
 function toDateInput(value?: string) {
   if (!value) return "";
-  return value.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+
+  const dateMatch = value.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (dateMatch) {
+    const [, month, day, year] = dateMatch;
+    const normalizedYear = year.length === 2 ? `20${year}` : year;
+    return `${normalizedYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
 }
 
 function downloadCsv(filename: string, headers: string[], rows: string[][]) {
@@ -171,6 +177,16 @@ function StatusBadge({ stage }: { stage: FundedDeal["statusStage"] }) {
       <span className="text-xs font-medium">{config.label}</span>
     </span>
   );
+}
+
+function CommissionBadge({ status }: { status: FundedDeal["commissionStatus"] }) {
+  const config = {
+    pending: { tone: "bg-white text-[var(--foreground)]", label: "Commission Pending" },
+    "paid-out": { tone: "bg-[var(--success)]/12 text-[var(--success)]", label: "Commission Paid Out" },
+    clawback: { tone: "bg-[var(--danger)]/12 text-[var(--danger)]", label: "Commission Clawback" },
+  }[status];
+
+  return <span className={`pill ${config.tone}`}>{config.label}</span>;
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -393,7 +409,7 @@ function DealField({
 }
 
 export function FundedProgressView() {
-  const { data, showFinancials, addFundedDeal, updateFundedDeal, deleteFundedDeal } = useDealdash();
+  const { data, addFundedDeal, updateFundedDeal, deleteFundedDeal } = useDealdash();
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
 
@@ -432,14 +448,14 @@ export function FundedProgressView() {
     <SectionFrame
       eyebrow="Funded Deal Progress"
       title="Active files & payback tracker"
-      copy="Every economic lever is editable inline. House points drive the commission calc automatically — override the $ field any time."
+      copy="Every economic lever is editable inline. Deal servicing stays separate from commission payout status so the funded board mirrors your sheet correctly."
       actions={
         <div className="flex flex-wrap gap-3">
           <input
             className="field min-w-[220px]"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search funded deals…"
+            placeholder="Search funded deals..."
           />
           <button
             className="ghost-button flex items-center gap-2 text-sm"
@@ -454,7 +470,7 @@ export function FundedProgressView() {
             onClick={() =>
               downloadCsv(
                 "dealdash-funded-progress.csv",
-                ["Business", "Contact", "Funder", "Funded", "Rate", "Term", "Freq", "Payment", "House Pts%", "Broker Split%", "Commission$", "Payback", "Balance", "Status"],
+                ["Business", "Contact", "Funder", "Funded", "Rate", "Term", "Freq", "Payment", "House Pts%", "Broker Split%", "Commission$", "Payback", "Balance", "Status", "Commission Status"],
                 filteredDeals.map((deal) => {
                   const progress = progressForFundedDeal(deal);
                   return [
@@ -468,6 +484,7 @@ export function FundedProgressView() {
                     String(grossPaybackFromDeal(deal)),
                     String(progress.balanceRemaining),
                     deal.statusRaw,
+                    deal.commissionStatus,
                   ];
                 }),
               )
@@ -504,6 +521,7 @@ export function FundedProgressView() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap">
                     <StatusBadge stage={deal.statusStage} />
+                    <CommissionBadge status={deal.commissionStatus} />
                     <input
                       className="field flex-1 min-w-[200px] text-base font-semibold"
                       value={deal.businessName}
@@ -549,7 +567,7 @@ export function FundedProgressView() {
                     Payback Progress
                   </span>
                   <span className="text-xs text-[var(--muted)]">
-                    {showFinancials ? `${formatCurrency(balance)} remaining of ${formatCurrency(payback > 0 ? payback : deal.fundedAmount)}` : "Remaining balance hidden"}
+                    {`${formatCurrency(balance)} remaining of ${formatCurrency(payback > 0 ? payback : deal.fundedAmount)}`}
                   </span>
                 </div>
                 <div className="progress-track" style={{ height: "10px" }}>
@@ -569,7 +587,7 @@ export function FundedProgressView() {
               </div>
 
               {/* ── Deal economics ── */}
-              <div className={`px-5 pt-4 ${financeBlur(showFinancials)}`}>
+              <div className="px-5 pt-4">
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
                   Deal Economics
                 </p>
@@ -649,7 +667,7 @@ export function FundedProgressView() {
               </div>
 
               {/* ── Commission model ── */}
-              <div className={`px-5 pt-4 ${financeBlur(showFinancials)}`}>
+              <div className="px-5 pt-4">
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
                   Commission Model
                 </p>
@@ -666,9 +684,9 @@ export function FundedProgressView() {
                       placeholder="e.g. 9"
                     />
                   </DealField>
-                  <DealField label={`House Pts $ ${showFinancials && houseAmt > 0 ? `(${formatCurrency(houseAmt)})` : ""}`}>
+                  <DealField label={`House Pts $ ${houseAmt > 0 ? `(${formatCurrency(houseAmt)})` : ""}`}>
                     <div className="field w-full flex items-center text-sm font-semibold bg-[var(--accent-soft)] border-[var(--accent-strong)]/20 text-[var(--accent-strong)]">
-                      {showFinancials ? (houseAmt > 0 ? formatCurrency(houseAmt) : <span className="text-[var(--muted)] font-normal">Set house pts %</span>) : <span className="text-[var(--muted)] font-normal">Hidden</span>}
+                      {houseAmt > 0 ? formatCurrency(houseAmt) : <span className="text-[var(--muted)] font-normal">Set house pts %</span>}
                     </div>
                   </DealField>
                   <DealField label="Broker Split %">
@@ -698,7 +716,7 @@ export function FundedProgressView() {
               </div>
 
               {/* ── Other fields ── */}
-              <div className={`px-5 pt-4 pb-5 ${financeBlur(showFinancials)}`}>
+              <div className="px-5 pt-4 pb-5">
                 <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
                   Additional
                 </p>
@@ -758,7 +776,7 @@ export function FundedProgressView() {
                       className="field w-full text-sm"
                       value={deal.notes}
                       onChange={(e) => updateFundedDeal(deal.id, { notes: e.target.value })}
-                      placeholder="Notes…"
+                      placeholder="Notes..."
                     />
                   </DealField>
                 </div>
@@ -975,27 +993,25 @@ export function PipelineView() {
 export function FollowUpsView() {
   const { data, addFollowUp, updateFollowUp, deleteFollowUp } = useDealdash();
   const [query, setQuery] = useState("");
-  const [showCompleted, setShowCompleted] = useState(false);
   const deferredQuery = useDeferredValue(query);
 
   const filtered = useMemo(
     () =>
       data.followUps.filter(
         (item) =>
-          (showCompleted || !item.completed) &&
-          [item.businessName, item.contactName, item.notes, item.requestLabel]
+          [item.businessName, item.contactName, item.notes, item.phone]
             .join(" ")
             .toLowerCase()
             .includes(deferredQuery.toLowerCase()),
       ),
-    [data.followUps, deferredQuery, showCompleted],
+    [data.followUps, deferredQuery],
   );
 
   return (
     <SectionFrame
       eyebrow="Follow-Up Sheet"
       title="Daily contact queue"
-      copy="Callback list with due dates, notes, app-submitted flags, and completion tracking."
+      copy="A cleaner callback board with visible phone numbers, calendar-based last-contact dates, app checks, and roomier notes."
       actions={
         <div className="flex flex-wrap gap-3">
           <input
@@ -1004,14 +1020,6 @@ export function FollowUpsView() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search follow-ups"
           />
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--muted)]">
-            <input
-              type="checkbox"
-              checked={showCompleted}
-              onChange={(e) => setShowCompleted(e.target.checked)}
-            />
-            Show completed
-          </label>
           <button
             className="ghost-button flex items-center gap-2 text-sm"
             onClick={() => addFollowUp()}
@@ -1024,10 +1032,10 @@ export function FollowUpsView() {
       }
     >
       <div className="table-wrap border border-white/80 bg-white/76">
-        <table className="min-w-[1100px] w-full text-sm">
+        <table className="min-w-[1180px] w-full text-sm">
           <thead className="bg-white/88 text-left text-[var(--muted)]">
             <tr>
-              {["Business / Contact", "Phone", "Request", "Last Contact", "Due", "Priority", "App", "Done", "Notes", ""].map(
+              {["Business / Contact", "Phone", "Last Contact", "Priority", "App Check", "Notes", ""].map(
                 (h) => (
                   <th key={h} className="px-3 py-3 text-xs font-semibold uppercase tracking-wide">
                     {h}
@@ -1040,51 +1048,50 @@ export function FollowUpsView() {
             {filtered.map((item) => (
               <tr
                 key={item.id}
-                className={`border-t border-[var(--line)] align-top ${item.completed ? "opacity-50" : ""}`}
+                className="border-t border-[var(--line)] align-top"
               >
                 <td className="px-3 py-3">
                   <input
-                    className="field min-w-[180px] text-sm"
+                    className="field min-w-[220px] text-sm"
                     value={item.businessName}
                     onChange={(e) => updateFollowUp(item.id, { businessName: e.target.value })}
                   />
                   <input
-                    className="field mt-1.5 min-w-[180px] text-sm"
+                    className="field mt-1.5 min-w-[220px] text-sm"
                     value={item.contactName}
                     onChange={(e) => updateFollowUp(item.id, { contactName: e.target.value })}
                   />
                 </td>
                 <td className="px-3 py-3">
-                  <input
-                    className="field w-[130px] text-sm"
-                    value={item.phone || ""}
-                    onChange={(e) => updateFollowUp(item.id, { phone: e.target.value })}
-                    placeholder="Phone"
-                  />
+                  <div className="flex min-w-[220px] gap-2">
+                    <input
+                      className="field flex-1 text-sm"
+                      value={item.phone || ""}
+                      onChange={(e) => updateFollowUp(item.id, { phone: e.target.value })}
+                      placeholder="Phone"
+                    />
+                    <button
+                      className="ghost-button px-3"
+                      onClick={() => {
+                        if (item.phone) {
+                          void navigator.clipboard.writeText(item.phone);
+                        }
+                      }}
+                      title="Copy phone"
+                      type="button"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </button>
+                  </div>
                 </td>
                 <td className="px-3 py-3">
                   <input
-                    className="field w-[90px] text-sm"
-                    value={item.requestLabel}
-                    onChange={(e) => updateFollowUp(item.id, { requestLabel: e.target.value })}
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    className="field w-[100px] text-sm"
-                    value={item.lastContactLabel}
-                    onChange={(e) => updateFollowUp(item.id, { lastContactLabel: e.target.value })}
-                    placeholder="Last contact"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    className="field w-[140px] text-sm"
+                    className="field w-[170px] text-sm"
                     type="date"
-                    value={toDateInput(item.dueDate)}
+                    value={toDateInput(item.lastContactLabel)}
                     onChange={(e) =>
                       updateFollowUp(item.id, {
-                        dueDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined,
+                        lastContactLabel: e.target.value ? `${e.target.value}T00:00:00.000Z` : "",
                       })
                     }
                   />
@@ -1111,16 +1118,9 @@ export function FollowUpsView() {
                     type="checkbox"
                   />
                 </td>
-                <td className="px-3 py-3 text-center">
-                  <input
-                    checked={item.completed}
-                    onChange={(e) => updateFollowUp(item.id, { completed: e.target.checked })}
-                    type="checkbox"
-                  />
-                </td>
                 <td className="px-3 py-3">
                   <textarea
-                    className="field min-w-[220px] text-sm"
+                    className="field min-h-[120px] min-w-[340px] text-sm leading-6"
                     value={item.notes}
                     onChange={(e) => updateFollowUp(item.id, { notes: e.target.value })}
                   />

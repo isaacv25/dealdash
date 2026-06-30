@@ -82,32 +82,36 @@ export function createRealDataset(): SeedDataset {
   _pIdx = 0; // reset on every call so IDs are stable across warm-start invocations
 
   // ── Funded deals (Ethan Funded Deals - Sheet1.csv) ──────────────────────
+  /**
+   * Keep the Vercel-safe funded fallback in CSV-shaped rows so normalization
+   * stays identical to the uploaded source sheet, including source spelling.
+   */
   const fundedDeals: FundedDeal[] = [
-    fd("2025-12-30","Synchronized Strategies LLC","Anil Mahase","(908) 415-0665","mahaseanil@gmail.com",60000,1.5,45,"days",2000,"daily","Limitless Advance",0,2160,"slow-pay","Slow payments"),
-    fd("2026-02-05","H&R Home Health Care","Tiffany Hogan","(317) 992-3236","tiffanyhogan87@gmail.com",30000,1.49,50,"days",894,"daily","Kapfi",0,900,"paid-out","Paid out"),
-    fd("2026-02-06","H&R Home Health Care","Tiffany Hogan","(317) 992-3236","tiffanyhogan87@gmail.com",20000,1.49,50,"days",596,"daily","Avanza",0,720,"paid-out","Paid Out"),
-    fd("2026-02-06","Feed Barn Costa Mesa","Michael Hilterbrand","(949) 610-5457","info@feedbarncostamesa.com",30000,1.19,18,"weeks",1983.33,"weekly","Square",0,270,"paid-out","Paid Out (EPA)"),
-    fd("2026-02-10","Puroclean of Broken Arrow","James Hoover","(918) 574-1484","jhoover@puroclean.com",75000,1.32,48,"weeks",2062.5,"weekly","LG",0,1755,"paid-out","Paid Out"),
-    fd("2026-02-19","H&R Home Health Care","Tiffany Hogan","(317) 992-3236","tiffanyhogan87@gmail.com",20000,1.5,20,"days",1500,"daily","Parkview",0,720,"paid-out","Paid Out"),
-    fd("2026-02-20","JBJ Lighting Services","Joseph Brian Johns","(941) 667-0585","",35000,1.5,42,"weeks",1250,"weekly","Expansion",0,840,"paid-out","Paid Out"),
-    fd("2026-03-05","H&R Home Health Care","Tiffany Hogan","(317) 992-3236","tiffanyhogan87@gmail.com",20000,1.5,20,"days",1500,"daily","Denali",0,720,"watch","POCB"),
-    fd("2026-03-12","Rescue MD PLLC","Tochi Okoro","(313) 649-1867","tochiokoro@myrescuemd.com",50000,1.38,24,"weeks",2875,"weekly","W",0,540,"clawback","Paid Out + CB"),
-    fd("2026-03-16","Puroclean of Broken Arrow","James Hoover","(918) 574-1484","jhoover@puroclean.com",50000,1.32,40,"weeks",1650,"weekly","LG",0,1188,"paid-out","Paid Out"),
-    fd("2026-03-23","H&R Home Health Care","Tiffany Hogan","(317) 992-3236","tiffanyhogan87@gmail.com",50000,1.56,60,"days",1300,"daily","Avanza",0,-2400,"clawback","CB"),
-    fd("2026-03-25","Conexco INC","Edward Hamilton","(219) 628-6164","ed@conexcoinc.com",250000,1.4,18,"weeks",19444.44,"weekly","Pinnacle (Avion synd)",0,4500,"paid-out","Paid Out"),
-    fd("2026-04-17","Rescue MD PLLC","Tochi Okoro","(313) 649-1867","tochiokoro@myrescuemd.com",50000,1.4,18,"weeks",3888.89,"weekly","X Capital",0,1050,"paid-out","Paid Out"),
-    fd("2026-05-01","Duncan LLC","Melissa Duncan","(540) 974-1399","shenandoahvalley.owner@mrelectric.com",5500,1.69,75,"days",123.93,"daily","ZLUR",0,381,"paid-out","Paid Out"),
-    fd("2026-05-01","Remote Better LLC","Karthik Ranganathan","(214) 906-7807","info@remotebetter.ai",150000,1.4,34,"weeks",6176.47,"weekly","ENOD via Yashard",0,3600,"paid-out","Paid Out"),
-    fd("2026-05-01","Blue Lagune Therapy","Trish Biasotti","(713) 376-1343","info@bluelagunetherapy.com",300000,1.45,24,"weeks",18125,"weekly","Parkside via Yashard",0,6300,"paid-out","Paid Out"),
-    fd("2026-05-05","Rescue MD PLLC","Tochi Okoro","(313) 649-1867","tochiokoro@myrescuemd.com",50000,1.45,18,"weeks",4027.78,"weekly","ENOD via Yashard",0,240,"clawback","Paid Out+CB"),
-    fd("2026-05-15","Puroclean of Broken Arrow","James Hoover","(918) 574-1484","jhoover@puroclean.com",222000,1,20,"weeks",0,"weekly","BizPointCap (Reverse)",0,2124.84,"paid-out","Paid Out"),
-    fd("2026-05-26","Blue Lagune Therapy","Trish Biasotti","(713) 376-1343","biasotti2026@gmail.com",385000,1,0,"weeks",0,"weekly","Figure (HELOC)",0,7564.96,"paid-out","Paid Out"),
-    fd("2026-05-27","Cason Unlimited","Kevin Cason","(540) 426-9333","kevin@pacificlasales.com",10000,1.5,30,"days",500,"daily","Woodmere",0,660,"clawback","Clawback"),
-    fd("2026-05-28","Sato Solution","Sandro Toledo","(978) 596-7033","sato.solution23@gmail.com",40000,1.5,12,"weeks",4800,"weekly","Limitless Advance",0.1,3200,"active",""),
-    fd("2026-06-11","Sato Solution","Sandro Toledo","(978) 596-7033","sato.solution23@gmail.com",20000,1.5,14,"weeks",2142.86,"weekly","Limitless Advance",0.05,1220,"active",""),
-    fd("2026-06-17","Engage Labs LLC","Lynn Wills","(845) 321-1928","lwills@engagelabsllc.com",40000,1.45,40,"days",1450,"daily","Limitless Advance",0.05,2100,"active",""),
-    fd("2026-06-17","Rescue MD PLLC","Tochi Okoro","(313) 649-1867","tochiokoro@myrescuemd.com",25000,1.3,20,"weeks",1625,"weekly","ENOD via Yashard",0,750,"active",""),
-  ];
+    { Date: "12/30/2025", "Business Name": "Synchronized Strategies LLC", Name: "Anil Mahase", Number: "(908) 415-0665", Email: "mahaseanil@gmail.com", Amount: "$60,000.00", Rate: "1.5", Term: "45", "Term Unit": "Days", Payment: "$2,000.00", Funder: "Limitless Advance", Syndication: "0%", Commission: "$2,160.00", Status: "Slow payments" },
+    { Date: "2/5/2026", "Business Name": "H&R Home Health Care", Name: "Tiffany Hogan", Number: "(317) 992-3236", Email: "tiffanyhogan87@gmail.com", Amount: "$30,000.00", Rate: "1.49", Term: "50", "Term Unit": "Days", Payment: "$894.00", Funder: "Kapfi", Syndication: "0%", Commission: "$900.00", Status: "Paid out" },
+    { Date: "2/6/2026", "Business Name": "H&R Home Health Care", Name: "Tiffany Hogan", Number: "(317) 992-3236", Email: "tiffanyhogan87@gmail.com", Amount: "$20,000.00", Rate: "1.49", Term: "50", "Term Unit": "Days", Payment: "$596.00", Funder: "Avanza", Syndication: "0%", Commission: "$720.00", Status: "Paid Out" },
+    { Date: "2/6/2026", "Business Name": "Feed Barn Costa Mesa", Name: "Michael Hilterbrand", Number: "(949) 610-5457", Email: "info@feedbarncostamesa.com", Amount: "$30,000.00", Rate: "1.19", Term: "18", "Term Unit": "Weeks", Payment: "$1,983.33", Funder: "Sqaure", Syndication: "0%", Commission: "$270.00", Status: "Paid Out (EPA)" },
+    { Date: "2/10/2026", "Business Name": "Puroclean of Broken Arrow", Name: "James Hoover", Number: "(918) 574-1484", Email: "jhoover@puroclean.com", Amount: "$75,000.00", Rate: "1.32", Term: "48", "Term Unit": "Weeks", Payment: "$2,062.50", Funder: "LG", Syndication: "0%", Commission: "$1,755.00", Status: "Paid Out" },
+    { Date: "2/19/2026", "Business Name": "H&R Home Health Care", Name: "Tiffany Hogan", Number: "(317) 992-3236", Email: "tiffanyhogan87@gmail.com", Amount: "$20,000.00", Rate: "1.5", Term: "20", "Term Unit": "Days", Payment: "$1,500.00", Funder: "Parkview", Syndication: "0%", Commission: "$720.00", Status: "Paid Out" },
+    { Date: "2/20/2026", "Business Name": "JBJ Lighting Services", Name: "Joseph Brian Johns", Number: "(941) 667-0585", Email: "brian johns", Amount: "$35,000.00", Rate: "1.5", Term: "42", "Term Unit": "Weeks", Payment: "$1,250.00", Funder: "Expansion", Syndication: "0%", Commission: "$840.00", Status: "Paid Out" },
+    { Date: "3/5/2026", "Business Name": "H&R Home Health Care", Name: "Tiffany Hogan", Number: "(317) 992-3236", Email: "tiffanyhogan87@gmail.com", Amount: "$20,000.00", Rate: "1.5", Term: "20", "Term Unit": "Days", Payment: "$1,500.00", Funder: "Denali", Syndication: "0%", Commission: "$720.00", Status: "POCB" },
+    { Date: "3/12/2026", "Business Name": "Rescue MD PLLC", Name: "Tochi Okoro", Number: "(313) 649-1867", Email: "tochiokoro@myrescuemd.com", Amount: "$50,000.00", Rate: "1.38", Term: "24", "Term Unit": "Weeks", Payment: "$2,875.00", Funder: "W", Syndication: "0%", Commission: "$540.00", Status: "Paid Out + CB" },
+    { Date: "3/16/2026", "Business Name": "Puroclean of Broken Arrow", Name: "James Hoover", Number: "(918) 574-1484", Email: "jhoover@puroclean.com", Amount: "$50,000.00", Rate: "1.32", Term: "40", "Term Unit": "Weeks", Payment: "$1,650.00", Funder: "LG", Syndication: "0%", Commission: "$1,188.00", Status: "Paid Out" },
+    { Date: "3/23/2026", "Business Name": "H&R Home Health Care", Name: "Tiffany Hogan", Number: "(317) 992-3236", Email: "tiffanyhogan87@gmail.com", Amount: "$50,000.00", Rate: "1.56", Term: "60", "Term Unit": "Days", Payment: "$1,300.00", Funder: "Avanza", Syndication: "0%", Commission: "-$2,400.00", Status: "CB" },
+    { Date: "3/25/2026", "Business Name": "Conexco INC", Name: "Edward Hamilton", Number: "(219) 628-6164", Email: "ed@conexcoinc.com", Amount: "$250,000.00", Rate: "1.4", Term: "18", "Term Unit": "Weeks", Payment: "$19,444.44", Funder: "Pinnacle (Avion synd)", Syndication: "0%", Commission: "$4,500.00", Status: "Paid Out" },
+    { Date: "4/17/2026", "Business Name": "Rescue MD PLLC", Name: "Tochi Okoro", Number: "(313) 649-1867", Email: "tochiokoro@myrescuemd.com", Amount: "$50,000.00", Rate: "1.4", Term: "18", "Term Unit": "Weeks", Payment: "$3,888.89", Funder: "X Capital", Syndication: "0%", Commission: "$1,050.00", Status: "Paid Out" },
+    { Date: "5/1/2026", "Business Name": "Duncan LLC", Name: "Melissa Duncan", Number: "(540) 974-1399", Email: "shenandoahvalley.owner@mrelectric.com", Amount: "$5,500.00", Rate: "1.69", Term: "75", "Term Unit": "Days", Payment: "$123.93", Funder: "ZLUR", Syndication: "0%", Commission: "$381.00", Status: "Paid Out" },
+    { Date: "5/1/2026", "Business Name": "Remote Better LLC", Name: "Karthik Ranganathan", Number: "(214) 906-7807", Email: "info@remotebetter.ai", Amount: "$150,000.00", Rate: "1.4", Term: "34", "Term Unit": "Weeks", Payment: "$6,176.47", Funder: "ENOD via Yashard", Syndication: "0%", Commission: "$3,600.00", Status: "Paid Out" },
+    { Date: "5/1/2026", "Business Name": "Blue Lagune Therapy", Name: "Trish Biasotti", Number: "(713) 376-1343", Email: "info@bluelagunetherapy.com", Amount: "$300,000.00", Rate: "1.45", Term: "24", "Term Unit": "Weeks", Payment: "$18,125.00", Funder: "Parkside via Yashard", Syndication: "0%", Commission: "$6,300.00", Status: "Paid Out" },
+    { Date: "5/5/2026", "Business Name": "Rescue MD PLLC", Name: "Tochi Okoro", Number: "(313) 649-1867", Email: "tochiokoro@myrescuemd.com", Amount: "$50,000.00", Rate: "1.45", Term: "18", "Term Unit": "Weeks", Payment: "$4,027.78", Funder: "ENOD via Yashard", Syndication: "0%", Commission: "$240.00", Status: "Paid Out+CB" },
+    { Date: "5/15/2026", "Business Name": "Puroclean of Broken Arrow", Name: "James Hoover", Number: "(918) 574-1484", Email: "jhoover@puroclean.com", Amount: "$222,000.00", Rate: "", Term: "20 Weeks", "Term Unit": "", Payment: "#VALUE!", Funder: "BizPointCap (Reverse)", Syndication: "0%", Commission: "$2,124.84", Status: "Paid Out" },
+    { Date: "5/26/2026", "Business Name": "Blue Lagune Therapy", Name: "Trish Biasotti", Number: "(713) 376-1343", Email: "biasotti2026@gmail.com", Amount: "$385,000.00", Rate: "", Term: "", "Term Unit": "", Payment: "#DIV/0!", Funder: "Figure (HELOC)", Syndication: "0%", Commission: "$7,564.96", Status: "Paid Out" },
+    { Date: "5/27/2026", "Business Name": "Cason Unlimited", Name: "Kevin Cason", Number: "(540) 426-9333", Email: "kevin@pacificlasales.com", Amount: "$10,000.00", Rate: "1.5", Term: "30", "Term Unit": "Days", Payment: "$500.00", Funder: "Woodmere", Syndication: "0%", Commission: "$660.00", Status: "Clawback" },
+    { Date: "5/28/2026", "Business Name": "Sato Solution", Name: "Sandro Toledo", Number: "(978) 596-7033", Email: "sato.solution23@gmail.com", Amount: "$40,000.00", Rate: "1.5", Term: "12.5", "Term Unit": "Weeks", Payment: "$4,800.00", Funder: "Limitless Advance", Syndication: "10%", Commission: "$3,200.00", Status: "" },
+    { Date: "6/11/2026", "Business Name": "Sato Solution", Name: "Sandro Toledo", Number: "(978) 596-7033", Email: "sato.solution23@gmail.com", Amount: "$20,000.00", Rate: "1.5", Term: "14", "Term Unit": "Weeks", Payment: "$2,142.86", Funder: "Limitless Advance", Syndication: "5%", Commission: "$1,220.00", Status: "" },
+    { Date: "6/17/2026", "Business Name": "Engage Labs LLC", Name: "Lynn Wills", Number: "(845) 321-1928", Email: "lwills@engagelabsllc.com", Amount: "$40,000.00", Rate: "1.45", Term: "40", "Term Unit": "Daily", Payment: "$1,450.00", Funder: "Limitless Advance", Syndication: "5%", Commission: "$2,100.00", Status: "" },
+    { Date: "6/17/2026", "Business Name": "Rescue MD PLLC", Name: "Tochi Okoro", Number: "(313) 649-1867", Email: "tochiokoro@myrescuemd.com", Amount: "$25,000.00", Rate: "1.3", Term: "20", "Term Unit": "Weeks", Payment: "$1,625.00", Funder: "ENOD via Yashard", Syndication: "0%", Commission: "$750.00", Status: "" },
+  ].map((row, index) => normalizeFundedRow(row, "seed", index));
 
   // ── Pipeline deals — 2025 (Ethan's Deals - 2025.csv) ────────────────────
   const pipeline2025: PipelineDeal[] = [
@@ -451,55 +455,6 @@ export function createRealDataset(): SeedDataset {
   ];
 
   return { fundedDeals, pipelineDeals, followUps, importBatches, sourceMode: "csv" };
-}
-
-// ── Helper: build a FundedDeal directly from scalar values ───────────────────
-function fd(
-  fundedDate: string,
-  businessName: string,
-  contactName: string,
-  phone: string,
-  email: string,
-  fundedAmount: number,
-  factorRate: number,
-  termValue: number,
-  termUnit: FundedDeal["termUnit"],
-  paymentAmount: number,
-  paymentFrequency: FundedDeal["paymentFrequency"],
-  funder: string,
-  syndicationPercent: number,
-  commissionAmount: number,
-  statusStage: FundedDeal["statusStage"],
-  statusRaw: string,
-): FundedDeal {
-  const id = `funded-seed-${businessName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}-${fundedDate.replace(/-/g, "")}`;
-  const commissionPercent = fundedAmount > 0 && commissionAmount > 0 ? Math.abs(commissionAmount) / fundedAmount : 0;
-  return {
-    id,
-    businessName,
-    contactName,
-    phone: phone || undefined,
-    email: email || undefined,
-    fundedDate: `${fundedDate}T00:00:00.000Z`,
-    funder: funder || undefined,
-    fundedAmount,
-    factorRate,
-    termValue,
-    termUnit,
-    paymentAmount,
-    paymentFrequency,
-    syndicationPercent,
-    pointsPercent: 0,
-    housePointsPercent: 0, // broker sets this per deal
-    commissionPercent,
-    commissionAmount,
-    commissionStatus: statusStage === "clawback" ? "clawback" : statusStage === "paid-out" ? "paid-out" : "pending",
-    clawbackAmount: statusStage === "clawback" ? Math.abs(commissionAmount) : 0,
-    statusRaw: statusRaw || (statusStage === "active" ? "Active" : statusStage === "paid-out" ? "Paid Out" : statusStage === "clawback" ? "Clawback" : statusStage === "slow-pay" ? "Slow Pay" : "Watch"),
-    statusStage,
-    notes: "",
-    sourceLabel: "seed",
-  };
 }
 
 // ── Helper: build a PipelineDeal via normalization ───────────────────────────

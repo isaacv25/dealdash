@@ -71,11 +71,21 @@ function stageFromRawStatus(rawStatus: string): PipelineStage {
 
 function fundedStageFromRawStatus(rawStatus: string) {
   const normalized = rawStatus.trim().toLowerCase();
-  if (normalized.includes("paid out")) return "paid-out" as const;
   if (normalized.includes("clawback") || normalized === "cb" || normalized.includes("+cb")) return "clawback" as const;
   if (normalized.includes("slow")) return "slow-pay" as const;
   if (normalized.includes("pocb")) return "watch" as const;
   return "active" as const;
+}
+
+/**
+ * The source funded sheet uses "Paid Out" to mark broker commission payout,
+ * so we keep that separate from the advance's repayment progress stage.
+ */
+function commissionStatusFromRawStatus(rawStatus: string) {
+  const normalized = rawStatus.trim().toLowerCase();
+  if (normalized.includes("clawback") || normalized === "cb" || normalized.includes("+cb")) return "clawback" as const;
+  if (normalized.includes("paid out")) return "paid-out" as const;
+  return "pending" as const;
 }
 
 function splitCityState(value: string) {
@@ -97,6 +107,7 @@ export function normalizeFundedRow(row: Record<string, string>, sourceLabel: str
   const commissionAmount = parseCurrency(parsed.Commission);
   const commissionPercent = fundedAmount > 0 && commissionAmount > 0 ? commissionAmount / fundedAmount : 0;
   const statusStage = fundedStageFromRawStatus(parsed.Status);
+  const commissionStatus = commissionStatusFromRawStatus(parsed.Status);
 
   return {
     id: createId("funded", parsed["Business Name"] || parsed.Name || sourceLabel, index),
@@ -117,8 +128,8 @@ export function normalizeFundedRow(row: Record<string, string>, sourceLabel: str
     housePointsPercent: 0,
     commissionPercent,
     commissionAmount,
-    commissionStatus: statusStage === "clawback" ? "clawback" : statusStage === "paid-out" ? "paid-out" : "pending",
-    clawbackAmount: statusStage === "clawback" ? Math.abs(commissionAmount) : 0,
+    commissionStatus,
+    clawbackAmount: commissionStatus === "clawback" ? Math.abs(commissionAmount) : 0,
     statusRaw: parsed.Status || "Active",
     statusStage,
     notes: "",

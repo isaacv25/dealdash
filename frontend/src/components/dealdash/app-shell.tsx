@@ -18,7 +18,7 @@ const navItems = [
 
 export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
   const pathname = usePathname();
-  const { data, viewer, showFinancials, toggleFinancials, resetToSeed } = useDealdash();
+  const { data, viewer, showFinancials, toggleFinancials } = useDealdash();
 
   return (
     <main className="mx-auto w-full max-w-[1500px] px-4 py-4 lg:px-6 lg:py-6">
@@ -26,7 +26,7 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
         <aside className="glass-card rounded-[2rem] p-5 lg:sticky lg:top-6">
           <div className="mb-8 rounded-[1.6rem] bg-[linear-gradient(135deg,_rgba(21,94,239,0.18),_rgba(13,148,136,0.14))] p-5">
             <div className="pill bg-white/78 text-[var(--accent-strong)]">DealDash</div>
-            <h1 className="mt-3 text-xl font-semibold tracking-tight">MCA Operating System</h1>
+            <h1 className="mt-3 text-xl font-semibold tracking-tight">Book of Business Pipeline Dashboard</h1>
             <p className="mt-2 text-xs leading-6 text-[var(--muted)]">{viewer.companyName} workspace for {viewer.firstName} {viewer.lastName}.</p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <span className="pill bg-white text-[var(--foreground)]">DB-backed</span>
@@ -49,7 +49,6 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
               {showFinancials ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               {showFinancials ? "Hide Financials" : "Show Financials"}
             </button>
-            <button className="ghost-button w-full text-sm" onClick={() => { if (confirm("Reset this company workspace back to the bundled seed snapshot?")) resetToSeed(); }} type="button">Reset Workspace Seed</button>
             <form action={logoutAction}>
               <button className="ghost-button flex w-full items-center justify-center gap-2 text-sm" type="submit"><LogOut className="h-4 w-4" />Log Out</button>
             </form>
