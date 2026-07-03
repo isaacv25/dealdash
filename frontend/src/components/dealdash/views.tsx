@@ -22,7 +22,7 @@ import {
   renewalDateForFundedDeal,
 } from "@/lib/dealdash";
 import type { FollowUpItem, FundedDeal, ImportBatch, PipelineStage } from "@/lib/dealdash";
-import { CalendarClock, Copy, Download, Plus, Trash2, Upload } from "lucide-react";
+import { CalendarClock, Copy, Download, Eye, EyeOff, Plus, Trash2, Upload } from "lucide-react";
 import { useDealdash } from "./state";
 
 // ─── formatters ──────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ function formatCurrency(value?: number) {
 }
 
 function hiddenCurrency(showFinancials: boolean, value?: number) {
-  return showFinancials ? formatCurrency(value) : "Hidden";
+  return showFinancials ? formatCurrency(value) : "•••••";
 }
 
 function formatNumber(value?: number) {
@@ -69,6 +69,31 @@ function formatDate(value?: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return dateFormatter.format(parsed);
+}
+
+function getMonthKey(value?: string) {
+  if (!value) return "unknown";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "unknown";
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getMonthLabel(key: string) {
+  if (key === "unknown") return "Unknown date";
+  const [year, month] = key.split("-").map(Number);
+  return monthFormatter.format(new Date(year, month - 1, 1));
+}
+
+function buildMonthOptions<T>(items: T[], getDate: (item: T) => string | undefined) {
+  // Keep undated CSV/manual rows visible instead of letting month filters hide them forever.
+  const keys = new Set(items.map((item) => getMonthKey(getDate(item))));
+  return Array.from(keys)
+    .sort((left, right) => {
+      if (left === "unknown") return 1;
+      if (right === "unknown") return -1;
+      return right.localeCompare(left);
+    })
+    .map((key) => ({ key, label: getMonthLabel(key) }));
 }
 
 function toDateInput(value?: string) {
@@ -143,15 +168,32 @@ function MetricCard({
   label,
   value,
   detail,
+  hidden,
+  onToggleVisibility,
 }: Readonly<{
   label: string;
   value: string;
   detail: string;
+  hidden?: boolean;
+  onToggleVisibility?: () => void;
 }>) {
   return (
-    <div className="rounded-[1.6rem] border border-white/80 bg-[var(--card-strong)] p-5 shadow-[0_16px_38px_rgba(21,42,74,0.08)]">
-      <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">{label}</p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p>
+    <div className="rounded-[1.15rem] border border-white/80 bg-[var(--card-strong)] p-5 shadow-[0_16px_38px_rgba(21,42,74,0.08)]">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">{label}</p>
+        {onToggleVisibility && (
+          <button
+            aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
+            className="icon-button"
+            onClick={onToggleVisibility}
+            title={hidden ? `Show ${label}` : `Hide ${label}`}
+            type="button"
+          >
+            {hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        )}
+      </div>
+      <p className="mt-2 min-h-[2.25rem] text-2xl font-semibold tracking-tight">{value}</p>
       <p className="mt-1 text-xs text-[var(--muted)]">{detail}</p>
     </div>
   );
@@ -194,6 +236,29 @@ function CommissionBadge({ status }: { status: FundedDeal["commissionStatus"] })
 export function DashboardView() {
   const { data, showFinancials } = useDealdash();
   const [today] = useState(() => Date.now());
+  const [hiddenMetrics, setHiddenMetrics] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") {
+      return showFinancials ? {} : { fundedVolume: true, grossPayback: true, commission: true, followUps: false };
+    }
+    const saved = window.localStorage.getItem("dealdash.dashboard.hiddenMetrics");
+    if (!saved) {
+      return showFinancials ? {} : { fundedVolume: true, grossPayback: true, commission: true, followUps: false };
+    }
+    try {
+      return JSON.parse(saved) as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  });
+
+  function toggleMetricVisibility(key: string) {
+    setHiddenMetrics((current) => {
+      const next = { ...current, [key]: !current[key] };
+      // Only booleans are stored; actual financial values stay in app state/database.
+      window.localStorage.setItem("dealdash.dashboard.hiddenMetrics", JSON.stringify(next));
+      return next;
+    });
+  }
 
   const metrics = useMemo(() => {
     const fundedVolume = data.fundedDeals.reduce((sum, deal) => sum + deal.fundedAmount, 0);
@@ -266,23 +331,31 @@ export function DashboardView() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Funded Volume"
-          value={hiddenCurrency(showFinancials, metrics.fundedVolume)}
+          value={hiddenCurrency(!hiddenMetrics.fundedVolume, metrics.fundedVolume)}
           detail={`${metrics.fundedCount} funded files on the board`}
+          hidden={Boolean(hiddenMetrics.fundedVolume)}
+          onToggleVisibility={() => toggleMetricVisibility("fundedVolume")}
         />
         <MetricCard
           label="Gross Payback"
-          value={hiddenCurrency(showFinancials, metrics.grossPayback)}
-          detail={showFinancials ? `Remaining balance ${formatCurrency(metrics.remaining)}` : "Remaining balance hidden"}
+          value={hiddenCurrency(!hiddenMetrics.grossPayback, metrics.grossPayback)}
+          detail={!hiddenMetrics.grossPayback ? `Remaining balance ${formatCurrency(metrics.remaining)}` : "Remaining balance hidden"}
+          hidden={Boolean(hiddenMetrics.grossPayback)}
+          onToggleVisibility={() => toggleMetricVisibility("grossPayback")}
         />
         <MetricCard
           label="Commission Book"
-          value={hiddenCurrency(showFinancials, metrics.commission)}
+          value={hiddenCurrency(!hiddenMetrics.commission, metrics.commission)}
           detail={`${metrics.upcomingRenewals} renewals approaching`}
+          hidden={Boolean(hiddenMetrics.commission)}
+          onToggleVisibility={() => toggleMetricVisibility("commission")}
         />
         <MetricCard
           label="Open Follow-Ups"
-          value={formatNumber(metrics.followUpCount)}
+          value={hiddenMetrics.followUps ? "•••••" : formatNumber(metrics.followUpCount)}
           detail={`${metrics.pipelineCount} active pipeline records`}
+          hidden={Boolean(hiddenMetrics.followUps)}
+          onToggleVisibility={() => toggleMetricVisibility("followUps")}
         />
       </div>
 
@@ -411,17 +484,24 @@ function DealField({
 export function FundedProgressView() {
   const { data, addFundedDeal, updateFundedDeal, deleteFundedDeal } = useDealdash();
   const [query, setQuery] = useState("");
+  const [activeMonth, setActiveMonth] = useState("all");
   const deferredQuery = useDeferredValue(query);
+  const monthOptions = useMemo(
+    () => buildMonthOptions(data.fundedDeals, (deal) => deal.fundedDate),
+    [data.fundedDeals],
+  );
 
   const filteredDeals = useMemo(
     () =>
-      data.fundedDeals.filter((deal) =>
-        [deal.businessName, deal.contactName, deal.funder, deal.statusRaw]
+      data.fundedDeals.filter((deal) => {
+        const matchesMonth = activeMonth === "all" || getMonthKey(deal.fundedDate) === activeMonth;
+        const matchesQuery = [deal.businessName, deal.contactName, deal.funder, deal.statusRaw]
           .join(" ")
           .toLowerCase()
-          .includes(deferredQuery.toLowerCase()),
-      ),
-    [data.fundedDeals, deferredQuery],
+          .includes(deferredQuery.toLowerCase());
+        return matchesMonth && matchesQuery;
+      }),
+    [data.fundedDeals, deferredQuery, activeMonth],
   );
 
   /** When house points % or broker split % changes, auto-calc commission $. */
@@ -457,6 +537,18 @@ export function FundedProgressView() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search funded deals..."
           />
+          <select
+            className="field min-w-[170px] text-sm"
+            value={activeMonth}
+            onChange={(e) => setActiveMonth(e.target.value)}
+          >
+            <option value="all">All months</option>
+            {monthOptions.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <button
             className="ghost-button flex items-center gap-2 text-sm"
             onClick={() => addFundedDeal()}
@@ -796,22 +888,28 @@ export function FundedProgressView() {
 export function PipelineView() {
   const { data, addPipelineDeal, updatePipelineDeal, deletePipelineDeal } = useDealdash();
   const [query, setQuery] = useState("");
+  const [activeMonth, setActiveMonth] = useState("all");
   const [activeStages, setActiveStages] = useState<Set<PipelineStage>>(
     new Set(["new-lead", "submitted", "in-review", "approved", "contract-out"]),
   );
   const deferredQuery = useDeferredValue(query);
+  const monthOptions = useMemo(
+    () => buildMonthOptions(data.pipelineDeals, (deal) => deal.submittedDate),
+    [data.pipelineDeals],
+  );
 
   const filtered = useMemo(
     () =>
       data.pipelineDeals.filter(
         (deal) =>
+          (activeMonth === "all" || getMonthKey(deal.submittedDate) === activeMonth) &&
           activeStages.has(deal.stage) &&
           [deal.businessName, deal.contactName, deal.statusRaw, deal.notes]
             .join(" ")
             .toLowerCase()
             .includes(deferredQuery.toLowerCase()),
       ),
-    [data.pipelineDeals, deferredQuery, activeStages],
+    [data.pipelineDeals, deferredQuery, activeStages, activeMonth],
   );
 
   function toggleStage(key: PipelineStage) {
@@ -839,6 +937,18 @@ export function PipelineView() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search pipeline"
           />
+          <select
+            className="field min-w-[170px] text-sm"
+            value={activeMonth}
+            onChange={(e) => setActiveMonth(e.target.value)}
+          >
+            <option value="all">All months</option>
+            {monthOptions.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <button
             className="ghost-button flex items-center gap-2 text-sm"
             onClick={() => addPipelineDeal()}
@@ -1001,7 +1111,7 @@ export function FollowUpsView() {
     () =>
       data.followUps.filter(
         (item) =>
-          [item.businessName, item.contactName, item.notes, item.phone]
+          [item.businessName, item.contactName, item.notes, item.phone, item.email, item.requestLabel]
             .join(" ")
             .toLowerCase()
             .includes(deferredQuery.toLowerCase()),
@@ -1033,116 +1143,125 @@ export function FollowUpsView() {
         </div>
       }
     >
-      <div className="table-wrap border border-white/80 bg-white/76">
-        <table className="min-w-[1180px] w-full text-sm">
-          <thead className="bg-white/88 text-left text-[var(--muted)]">
-            <tr>
-              {["Business / Contact", "Phone", "Last Contact", "Priority", "App Check", "Notes", ""].map(
-                (h) => (
-                  <th key={h} className="px-3 py-3 text-xs font-semibold uppercase tracking-wide">
-                    {h}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((item) => (
-              <tr
-                key={item.id}
-                className="border-t border-[var(--line)] align-top"
-              >
-                <td className="px-3 py-3">
-                  <input
-                    className="field min-w-[220px] text-sm"
-                    value={item.businessName}
-                    onChange={(e) => updateFollowUp(item.id, { businessName: e.target.value })}
-                  />
-                  <input
-                    className="field mt-1.5 min-w-[220px] text-sm"
-                    value={item.contactName}
-                    onChange={(e) => updateFollowUp(item.id, { contactName: e.target.value })}
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <div className="flex min-w-[220px] gap-2">
-                    <input
-                      className="field flex-1 text-sm"
-                      value={item.phone || ""}
-                      onChange={(e) => updateFollowUp(item.id, { phone: e.target.value })}
-                      placeholder="Phone"
-                    />
-                    <button
-                      className="ghost-button px-3"
-                      onClick={() => {
-                        if (item.phone) {
-                          void navigator.clipboard.writeText(item.phone);
-                        }
-                      }}
-                      title="Copy phone"
-                      type="button"
-                    >
-                      <Copy className="h-4 w-4" />
-                    </button>
-                  </div>
-                </td>
-                <td className="px-3 py-3">
-                  <input
-                    className="field w-[170px] text-sm"
-                    type="date"
-                    value={toDateInput(item.lastContactLabel)}
-                    onChange={(e) =>
-                      updateFollowUp(item.id, {
-                        lastContactLabel: e.target.value ? `${e.target.value}T00:00:00.000Z` : "",
-                      })
-                    }
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <select
-                    className="field w-[100px] text-sm"
-                    value={item.priority}
-                    onChange={(e) =>
-                      updateFollowUp(item.id, {
-                        priority: e.target.value as FollowUpItem["priority"],
-                      })
-                    }
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
-                </td>
-                <td className="px-3 py-3 text-center">
-                  <input
-                    checked={item.appSubmitted}
-                    onChange={(e) => updateFollowUp(item.id, { appSubmitted: e.target.checked })}
-                    type="checkbox"
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <textarea
-                    className="field min-h-[120px] min-w-[340px] text-sm leading-6"
-                    value={item.notes}
-                    onChange={(e) => updateFollowUp(item.id, { notes: e.target.value })}
-                  />
-                </td>
-                <td className="px-3 py-3">
-                  <button
-                    className="delete-button"
-                    onClick={() => {
-                      if (confirm(`Delete ${item.contactName}?`)) deleteFollowUp(item.id);
-                    }}
-                    title="Delete"
-                    type="button"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="space-y-3">
+        <div className="hidden grid-cols-[1.1fr_1fr_0.9fr_130px_100px_minmax(260px,1.4fr)_44px] gap-3 rounded-[1rem] bg-white/82 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--muted)] lg:grid">
+          <span>Business / Contact</span>
+          <span>Phone / Email</span>
+          <span>Last Contact / Request</span>
+          <span>Priority</span>
+          <span>App Check</span>
+          <span>Notes</span>
+          <span />
+        </div>
+        {filtered.map((item) => (
+          <article
+            key={item.id}
+            className="grid gap-3 rounded-[1.1rem] border border-white/80 bg-white/78 p-3 shadow-[0_8px_26px_rgba(21,42,74,0.06)] lg:grid-cols-[1.1fr_1fr_0.9fr_130px_100px_minmax(260px,1.4fr)_44px] lg:items-start"
+          >
+            <div className="grid gap-2">
+              <input
+                className="field text-sm"
+                value={item.businessName}
+                onChange={(e) => updateFollowUp(item.id, { businessName: e.target.value })}
+                placeholder="Business"
+              />
+              <input
+                className="field text-sm"
+                value={item.contactName}
+                onChange={(e) => updateFollowUp(item.id, { contactName: e.target.value })}
+                placeholder="Contact"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <div className="flex gap-2">
+                <input
+                  className="field flex-1 text-sm"
+                  value={item.phone || ""}
+                  onChange={(e) => updateFollowUp(item.id, { phone: e.target.value })}
+                  placeholder="Phone"
+                />
+                <button
+                  className="icon-button h-[44px] w-[44px] shrink-0"
+                  onClick={() => {
+                    if (item.phone) void navigator.clipboard.writeText(item.phone);
+                  }}
+                  title="Copy phone"
+                  type="button"
+                >
+                  <Copy className="h-4 w-4" />
+                </button>
+              </div>
+              <input
+                className="field text-sm"
+                value={item.email || ""}
+                onChange={(e) => updateFollowUp(item.id, { email: e.target.value })}
+                placeholder="Email"
+                type="email"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <input
+                className="field text-sm"
+                type="date"
+                value={toDateInput(item.lastContactLabel)}
+                onChange={(e) =>
+                  updateFollowUp(item.id, {
+                    lastContactLabel: e.target.value ? `${e.target.value}T00:00:00.000Z` : "",
+                  })
+                }
+              />
+              <input
+                className="field text-sm"
+                value={item.requestLabel}
+                onChange={(e) => updateFollowUp(item.id, { requestLabel: e.target.value })}
+                placeholder="Request, e.g. 100k LOC"
+              />
+            </div>
+
+            <select
+              className="field min-w-[118px] text-sm"
+              value={item.priority}
+              onChange={(e) =>
+                updateFollowUp(item.id, {
+                  priority: e.target.value as FollowUpItem["priority"],
+                })
+              }
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+
+            <label className="inline-flex items-center gap-2 rounded-[0.9rem] border border-[var(--line)] bg-white/72 px-3 py-3 text-sm font-semibold text-[var(--muted)]">
+              <input
+                checked={item.appSubmitted}
+                onChange={(e) => updateFollowUp(item.id, { appSubmitted: e.target.checked })}
+                type="checkbox"
+              />
+              App
+            </label>
+
+            <textarea
+              className="field min-h-[116px] text-sm leading-6"
+              value={item.notes}
+              onChange={(e) => updateFollowUp(item.id, { notes: e.target.value })}
+              placeholder="Notes"
+            />
+
+            <button
+              className="delete-button h-[40px] w-[40px]"
+              onClick={() => {
+                if (confirm(`Delete ${item.contactName}?`)) deleteFollowUp(item.id);
+              }}
+              title="Delete"
+              type="button"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </article>
+        ))}
       </div>
     </SectionFrame>
   );

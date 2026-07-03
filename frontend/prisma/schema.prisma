@@ -28,7 +28,7 @@ model User {
   lastName                String
   username                String          @unique
   passwordHash            String
-  role                    String          @default("admin")
+  role                    String          @default("user")
   hideFinancialsByDefault Boolean         @default(true)
   sessions                Session[]
   createdFundedDeals      FundedDeal[]    @relation("FundedDealCreatedBy")

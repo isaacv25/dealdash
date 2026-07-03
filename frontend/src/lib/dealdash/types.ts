@@ -100,6 +100,8 @@ export interface SeedDataset {
 export interface ViewerProfile {
   userId: string;
   username: string;
+  role: string;
+  isAdmin: boolean;
   firstName: string;
   lastName: string;
   companyName: string;

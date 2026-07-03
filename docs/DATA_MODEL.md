@@ -24,6 +24,8 @@ DealDash is now multi-tenant at the company level.
 - `hideFinancialsByDefault`
 - `companyId`
 
+`role` defaults to `user`. The production database is backfilled so Ethan's existing account is the only `admin` account. Admin routes must enforce this on the server, not only by hiding navigation.
+
 ### Session
 
 - `tokenHash`
@@ -70,7 +72,15 @@ Current commission statuses:
 
 ## Hidden financials preference
 
-Sensitive financial visibility is stored on the user record so one teammate can keep numbers hidden by default while another can reveal them after signing in.
+Sensitive financial visibility is stored on the user record as the account-level default. Dashboard KPI cards now also keep independent show/hide booleans in browser `localStorage`; those booleans do not contain financial values.
+
+## Settings updates
+
+The Settings page updates profile and company fields through server actions. Username updates check the global unique username constraint before saving. Password updates require the current password and hash the replacement with the same `scrypt` helper used during signup.
+
+## Date tracking
+
+Funded deals use `fundedDate` for month filtering. Pipeline deals use `submittedDate`, which comes from the `Date App` CSV column. Rows without a usable date stay available under an `Unknown date` bucket.
 
 ## Import dedupe model
 

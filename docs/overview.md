@@ -43,6 +43,16 @@ dealdash/
 - Later accounts create clean company workspaces by default.
 - Passwords are stored with `scrypt` as `salt:hash`.
 - Sessions are stored in Postgres using a hashed session token.
+- New signups default to `role = "user"`.
+- The `/admin` page uses a server-side role check and is only visible in navigation to admin users.
+- The live database is backfilled so the existing Ethan account is the sole admin.
+
+## Settings model
+
+- Logged-in users can update first name, last name, username, company name, and password from `/settings`.
+- Usernames remain globally unique through the Prisma unique constraint and a server-side availability check.
+- Company names are not unique; multiple workspaces can share the same display name.
+- Password changes require the current password and reuse the existing `scrypt` hashing helper in `frontend/src/lib/auth.ts`.
 
 ## Funded progress calculations
 
@@ -55,8 +65,16 @@ dealdash/
 ## Hidden financials behavior
 
 - `hideFinancialsByDefault` is stored on the `User` row.
-- The sidebar toggle flips that preference and updates the UI immediately.
-- Future sessions should extend the masking rules if more finance-heavy screens are added.
+- Dashboard KPI cards now have independent eye/eye-off visibility controls.
+- Only dashboard visibility booleans are stored in `localStorage`; financial values are not stored there.
+- Other finance-heavy screens can still use the user preference as a default masking signal.
+
+## Month and date filtering
+
+- Funded Progress filters by `fundedDate`.
+- Pipeline filters by `submittedDate` from the original `Date App` CSV column.
+- Missing or unparsable dates are grouped under `Unknown date` instead of being silently dropped.
+- Imported CSV date strings are normalized through the shared parsing helpers before persistence.
 
 ## CSV import and manual entry workflow
 

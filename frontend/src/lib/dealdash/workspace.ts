@@ -12,6 +12,8 @@ function viewerFromUser(user: User & { company: { name: string } }): ViewerProfi
   return {
     userId: user.id,
     username: user.username,
+    role: user.role,
+    isAdmin: user.role === "admin",
     firstName: user.firstName,
     lastName: user.lastName,
     companyName: user.company.name,

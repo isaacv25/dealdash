@@ -26,7 +26,10 @@ DealDash is a production-shaped MCA operating system that now combines:
 - Follow-up sheet with completion and submission tracking
 - Rate calculator for factor rate, payment rhythm, syndication, points, commission, and clawback modeling
 - CSV upload preview plus server-persisted import merges
-- Hidden financials toggle stored per user
+- Dashboard KPI values with individual show/hide controls
+- Admin-only user count/list view for Ethan's admin account
+- Settings page for name, username, company name, and password updates
+- Month filters on funded progress and pipeline views
 
 ## Local development
 
@@ -48,6 +51,8 @@ pnpm dev
 
 - `DATABASE_URL`
 - `SESSION_SECRET`
+
+Do not commit `.env` files or copied database URLs. `.gitignore` excludes local env files; keep live Neon credentials in Vercel env vars or shell-local exports only.
 
 ## Docs
 

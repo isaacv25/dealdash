@@ -110,3 +110,17 @@ export async function requireAuth() {
     redirect("/login");
   }
 }
+
+export function isAdminUser(user: { role: string }) {
+  return user.role === "admin";
+}
+
+export async function requireAdmin() {
+  await requireAuth();
+  const user = await getCurrentUser();
+  // Admin access is intentionally pinned to Ethan's account, not just any admin-like role.
+  if (!user || !isAdminUser(user)) {
+    redirect("/dashboard");
+  }
+  return user;
+}
