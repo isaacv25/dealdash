@@ -9,6 +9,8 @@ node_modules/
 frontend/.next-app/
 frontend/.next-webpack/
 _tmp_*
+dump/
+frontend/pnpm-workspace.yaml
 *.log
 .env
 .env.local
