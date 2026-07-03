@@ -2,7 +2,9 @@ import type { Prisma, User } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { createBlankFollowUp, createBlankFundedDeal, createBlankPipelineDeal } from "./defaults";
 import { createRealDataset, loadSeedDataset } from "./data";
-import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset, ViewerProfile } from "./types";
+import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset, TrashRecord, TrashRecordType, ViewerProfile } from "./types";
+
+const TRASH_RETENTION_DAYS = 30;
 
 function toIso(value?: Date | null) {
   return value ? value.toISOString() : undefined;
@@ -45,10 +47,12 @@ function serializeFundedDeal(record: Prisma.FundedDealGetPayload<object>): Funde
     clawbackAmount: record.clawbackAmount,
     statusRaw: record.statusRaw,
     statusStage: record.statusStage as FundedDeal["statusStage"],
+    fundedTags: record.fundedTags as FundedDeal["fundedTags"],
     notes: record.notes,
     sourceLabel: record.sourceLabel,
     manualBalanceRemaining: record.manualBalanceRemaining ?? undefined,
     manualRenewalDate: toIso(record.manualRenewalDate),
+    deletedAt: toIso(record.deletedAt),
   };
 }
 
@@ -71,6 +75,7 @@ function serializePipelineDeal(record: Prisma.PipelineDealGetPayload<object>): P
     sheetLabel: record.sheetLabel,
     nextFollowUpDate: toIso(record.nextFollowUpDate),
     sourceLabel: record.sourceLabel,
+    deletedAt: toIso(record.deletedAt),
   };
 }
 
@@ -90,6 +95,7 @@ function serializeFollowUp(record: Prisma.FollowUpItemGetPayload<object>): Follo
     completed: record.completed,
     sheetLabel: record.sheetLabel,
     sourceLabel: record.sourceLabel,
+    deletedAt: toIso(record.deletedAt),
   };
 }
 
@@ -162,6 +168,7 @@ async function persistSeedDataset(companyId: string, userId: string, dataset: Se
         clawbackAmount: deal.clawbackAmount,
         statusRaw: deal.statusRaw,
         statusStage: deal.statusStage,
+        fundedTags: deal.fundedTags,
         notes: deal.notes,
         sourceLabel: deal.sourceLabel,
         manualBalanceRemaining: deal.manualBalanceRemaining ?? null,
@@ -251,9 +258,9 @@ export async function resetWorkspaceToSeed(companyId: string, userId: string) {
 
 export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
   const [fundedDeals, pipelineDeals, followUps, importBatches] = await Promise.all([
-    prisma.fundedDeal.findMany({ where: { companyId }, orderBy: [{ fundedDate: "desc" }, { createdAt: "desc" }] }),
-    prisma.pipelineDeal.findMany({ where: { companyId }, orderBy: [{ submittedDate: "desc" }, { createdAt: "desc" }] }),
-    prisma.followUpItem.findMany({ where: { companyId }, orderBy: [{ completed: "asc" }, { updatedAt: "desc" }] }),
+    prisma.fundedDeal.findMany({ where: { companyId, deletedAt: null }, orderBy: [{ fundedDate: "desc" }, { createdAt: "desc" }] }),
+    prisma.pipelineDeal.findMany({ where: { companyId, deletedAt: null }, orderBy: [{ submittedDate: "desc" }, { createdAt: "desc" }] }),
+    prisma.followUpItem.findMany({ where: { companyId, deletedAt: null }, orderBy: [{ completed: "asc" }, { updatedAt: "desc" }] }),
     prisma.importBatch.findMany({ where: { companyId }, orderBy: { importedAt: "desc" } }),
   ]);
 
@@ -301,6 +308,7 @@ function fundedUpdateData(patch: Partial<FundedDeal>, userId: string): Prisma.Fu
     ...(patch.clawbackAmount !== undefined ? { clawbackAmount: patch.clawbackAmount } : {}),
     ...(patch.statusRaw !== undefined ? { statusRaw: patch.statusRaw } : {}),
     ...(patch.statusStage !== undefined ? { statusStage: patch.statusStage } : {}),
+    ...(patch.fundedTags !== undefined ? { fundedTags: patch.fundedTags } : {}),
     ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
     ...(patch.sourceLabel !== undefined ? { sourceLabel: patch.sourceLabel } : {}),
     ...(patch.manualBalanceRemaining !== undefined ? { manualBalanceRemaining: patch.manualBalanceRemaining ?? null } : {}),
@@ -364,8 +372,8 @@ async function requireOwnedFollowUp(companyId: string, id: string) {
   if (!record) throw new Error("Follow-up item not found for this company.");
 }
 
-export async function createFundedDeal(companyId: string, userId: string) {
-  const draft = createBlankFundedDeal();
+export async function createFundedDeal(companyId: string, userId: string, fundedDate?: string) {
+  const draft = createBlankFundedDeal(fundedDate || new Date().toISOString());
   const created = await prisma.fundedDeal.create({
     data: {
       companyId,
@@ -392,6 +400,7 @@ export async function createFundedDeal(companyId: string, userId: string) {
       clawbackAmount: draft.clawbackAmount,
       statusRaw: draft.statusRaw,
       statusStage: draft.statusStage,
+      fundedTags: draft.fundedTags,
       notes: draft.notes,
       sourceLabel: draft.sourceLabel,
     },
@@ -407,11 +416,11 @@ export async function updateFundedDeal(companyId: string, userId: string, id: st
 
 export async function deleteFundedDeal(companyId: string, id: string) {
   await requireOwnedFundedDeal(companyId, id);
-  await prisma.fundedDeal.delete({ where: { id } });
+  await prisma.fundedDeal.update({ where: { id }, data: { deletedAt: new Date() } });
 }
 
-export async function createPipelineDeal(companyId: string, userId: string) {
-  const draft = createBlankPipelineDeal();
+export async function createPipelineDeal(companyId: string, userId: string, submittedDate?: string) {
+  const draft = createBlankPipelineDeal(submittedDate);
   const created = await prisma.pipelineDeal.create({
     data: {
       companyId,
@@ -419,6 +428,7 @@ export async function createPipelineDeal(companyId: string, userId: string) {
       updatedByUserId: userId,
       contactName: draft.contactName,
       businessName: draft.businessName,
+      submittedDate: draft.submittedDate ? new Date(draft.submittedDate) : null,
       requestLabel: draft.requestLabel,
       statusRaw: draft.statusRaw,
       stage: draft.stage,
@@ -438,7 +448,7 @@ export async function updatePipelineDeal(companyId: string, userId: string, id: 
 
 export async function deletePipelineDeal(companyId: string, id: string) {
   await requireOwnedPipelineDeal(companyId, id);
-  await prisma.pipelineDeal.delete({ where: { id } });
+  await prisma.pipelineDeal.update({ where: { id }, data: { deletedAt: new Date() } });
 }
 
 export async function createFollowUp(companyId: string, userId: string) {
@@ -470,6 +480,79 @@ export async function updateFollowUp(companyId: string, userId: string, id: stri
 }
 
 export async function deleteFollowUp(companyId: string, id: string) {
+  await requireOwnedFollowUp(companyId, id);
+  await prisma.followUpItem.update({ where: { id }, data: { deletedAt: new Date() } });
+}
+
+function daysRemainingFromDeletedAt(deletedAt: Date) {
+  const expiresAt = new Date(deletedAt);
+  expiresAt.setDate(expiresAt.getDate() + TRASH_RETENTION_DAYS);
+  return Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
+
+function trashCutoffDate() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - TRASH_RETENTION_DAYS);
+  return cutoff;
+}
+
+function trashRecord(type: TrashRecordType, record: { id: string; deletedAt: Date | null }, label: string, detail: string): TrashRecord | null {
+  if (!record.deletedAt) return null;
+  const daysRemaining = daysRemainingFromDeletedAt(record.deletedAt);
+  if (daysRemaining <= 0) return null;
+  return {
+    id: record.id,
+    type,
+    label,
+    detail,
+    deletedAt: record.deletedAt.toISOString(),
+    daysRemaining,
+  };
+}
+
+export async function loadTrash(companyId: string): Promise<TrashRecord[]> {
+  const cutoff = trashCutoffDate();
+  const [fundedDeals, pipelineDeals, followUps] = await Promise.all([
+    prisma.fundedDeal.findMany({ where: { companyId, deletedAt: { gt: cutoff } }, orderBy: { deletedAt: "desc" } }),
+    prisma.pipelineDeal.findMany({ where: { companyId, deletedAt: { gt: cutoff } }, orderBy: { deletedAt: "desc" } }),
+    prisma.followUpItem.findMany({ where: { companyId, deletedAt: { gt: cutoff } }, orderBy: { deletedAt: "desc" } }),
+  ]);
+
+  return [
+    ...fundedDeals.map((record) => trashRecord("funded", record, record.businessName, `${record.contactName} - ${record.funder || "No funder"}`)),
+    ...pipelineDeals.map((record) => trashRecord("pipeline", record, record.businessName, `${record.contactName} - ${record.stage}`)),
+    ...followUps.map((record) => trashRecord("follow-up", record, record.businessName, `${record.contactName} - ${record.priority}`)),
+  ]
+    .filter((record): record is TrashRecord => Boolean(record))
+    .sort((left, right) => right.deletedAt.localeCompare(left.deletedAt));
+}
+
+export async function restoreTrashRecord(companyId: string, type: TrashRecordType, id: string) {
+  if (type === "funded") {
+    await requireOwnedFundedDeal(companyId, id);
+    await prisma.fundedDeal.update({ where: { id }, data: { deletedAt: null } });
+    return;
+  }
+  if (type === "pipeline") {
+    await requireOwnedPipelineDeal(companyId, id);
+    await prisma.pipelineDeal.update({ where: { id }, data: { deletedAt: null } });
+    return;
+  }
+  await requireOwnedFollowUp(companyId, id);
+  await prisma.followUpItem.update({ where: { id }, data: { deletedAt: null } });
+}
+
+export async function permanentlyDeleteTrashRecord(companyId: string, type: TrashRecordType, id: string) {
+  if (type === "funded") {
+    await requireOwnedFundedDeal(companyId, id);
+    await prisma.fundedDeal.delete({ where: { id } });
+    return;
+  }
+  if (type === "pipeline") {
+    await requireOwnedPipelineDeal(companyId, id);
+    await prisma.pipelineDeal.delete({ where: { id } });
+    return;
+  }
   await requireOwnedFollowUp(companyId, id);
   await prisma.followUpItem.delete({ where: { id } });
 }
@@ -514,6 +597,7 @@ export async function importWorkspaceData(
           clawbackAmount: deal.clawbackAmount,
           statusRaw: deal.statusRaw,
           statusStage: deal.statusStage,
+          fundedTags: deal.fundedTags,
           notes: deal.notes,
           sourceLabel: deal.sourceLabel,
           manualBalanceRemaining: deal.manualBalanceRemaining ?? null,

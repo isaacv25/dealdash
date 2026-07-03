@@ -11,10 +11,10 @@ dealdash/
 |-- frontend/                  # Next.js 16 app deployed to Vercel
 |   |-- src/app/               # Routes, layouts, login flow, server actions
 |   |-- src/components/        # UI shell and views
+|   |-- prisma/schema.prisma   # Active Prisma schema used by local/Vercel builds
 |   |-- src/lib/auth.ts        # Session creation, password hashing, tenant auth checks
 |   |-- src/lib/db/prisma.ts   # Prisma singleton for server actions and route loads
 |   `-- src/lib/dealdash/      # Types, calculations, seed loading, normalization, workspace persistence
-|-- backend/prisma/schema.prisma
 |-- data/imports/              # Local CSV seed directory + Vercel-safe fallback source material
 `-- docs/                      # Project continuation and deployment notes
 ```
@@ -26,15 +26,18 @@ dealdash/
 3. The `(app)` layout resolves the current user, loads the company-owned workspace from Postgres, and hydrates the client provider.
 4. The provider performs optimistic updates in the browser while server actions persist each mutation to the database.
 5. CSV imports are parsed in the browser for preview, then upserted on the server with company-scoped dedupe keys.
+6. Inline edits are debounced before persistence so typing stays stable and late server responses do not overwrite the focused field.
 
 ## Persistence architecture
 
 - Postgres is the source of truth.
-- Prisma schema lives at `backend/prisma/schema.prisma`.
+- Prisma schema lives at `frontend/prisma/schema.prisma`.
 - Each record belongs to a `Company`.
 - Each `User` belongs to exactly one company today.
 - `Session` rows back the auth cookie.
 - `FundedDeal`, `PipelineDeal`, `FollowUpItem`, and `ImportBatch` all carry `companyId` ownership.
+- `FundedDeal`, `PipelineDeal`, and `FollowUpItem` use `deletedAt` soft deletes; normal workspace loads exclude trashed rows.
+- `/trash` lists recoverable records for 30 calendar days and lets users restore them or permanently delete them.
 
 ## Auth and account model
 
@@ -61,6 +64,8 @@ dealdash/
 - Otherwise DealDash estimates progress from funded date, payment cadence, and periodic payment amount.
 - Renewal timing still defaults to 70% of the term unless manually overridden.
 - Commission payout status is tracked separately from the funded file status.
+- Funded tags are persisted on `fundedTags` and augmented at render time from obvious status/math signals.
+- Tag tint priority is deliberate: clawback red wins, then paid-in-full green, then active blue.
 
 ## Hidden financials behavior
 
@@ -74,13 +79,17 @@ dealdash/
 - Funded Progress filters by `fundedDate`.
 - Pipeline filters by `submittedDate` from the original `Date App` CSV column.
 - Missing or unparsable dates are grouped under `Unknown date` instead of being silently dropped.
+- Month dropdowns include existing record months plus the current month and the next 12 future months, so newly added future-dated deals have an obvious bucket.
+- When no month/stage/tag filters are selected, views intentionally show all matching records.
 - Imported CSV date strings are normalized through the shared parsing helpers before persistence.
+- Manual funded and pipeline adds include a date input; that selected date is persisted immediately and powers month tracking.
 
 ## CSV import and manual entry workflow
 
 - Browser parsing keeps previews fast and avoids uploading raw files before the user confirms.
 - The server scopes imported IDs to the company so the same sheet can be safely re-imported.
 - Manual add/edit/delete calls are persisted through server actions, not local storage.
+- Delete buttons soft-delete records into Trash rather than immediately removing them from Postgres.
 
 ## Continuing the project
 
@@ -88,7 +97,7 @@ Future Codex or developer sessions should start with these files first:
 
 - `frontend/src/lib/dealdash/workspace.ts`
 - `frontend/src/lib/auth.ts`
-- `backend/prisma/schema.prisma`
+- `frontend/prisma/schema.prisma`
 - `frontend/src/components/dealdash/state.tsx`
 - `frontend/src/components/dealdash/views.tsx`
 - `docs/DATA_MODEL.md`

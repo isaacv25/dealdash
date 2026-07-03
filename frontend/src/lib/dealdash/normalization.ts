@@ -132,6 +132,7 @@ export function normalizeFundedRow(row: Record<string, string>, sourceLabel: str
     clawbackAmount: commissionStatus === "clawback" ? Math.abs(commissionAmount) : 0,
     statusRaw: parsed.Status || "Active",
     statusStage,
+    fundedTags: [],
     notes: "",
     sourceLabel,
   };

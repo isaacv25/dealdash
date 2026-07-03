@@ -11,12 +11,15 @@ import {
   deletePipelineDeal,
   importWorkspaceData,
   loadWorkspaceForUser,
+  permanentlyDeleteTrashRecord,
   resetWorkspaceToSeed,
+  restoreTrashRecord,
   updateFollowUp,
   updateFundedDeal,
   updatePipelineDeal,
   updateViewerPreferences,
 } from "@/lib/dealdash/workspace";
+import type { TrashRecordType } from "@/lib/dealdash/types";
 
 async function getScopedUser() {
   await requireAuth();
@@ -30,9 +33,9 @@ export async function loadWorkspaceAction() {
   return loadWorkspaceForUser(user.id);
 }
 
-export async function createFundedDealAction() {
+export async function createFundedDealAction(fundedDate?: string) {
   const user = await getScopedUser();
-  return createFundedDeal(user.companyId, user.id);
+  return createFundedDeal(user.companyId, user.id, fundedDate);
 }
 
 export async function updateFundedDealAction(id: string, patch: Partial<FundedDeal>) {
@@ -45,9 +48,9 @@ export async function deleteFundedDealAction(id: string) {
   await deleteFundedDeal(user.companyId, id);
 }
 
-export async function createPipelineDealAction() {
+export async function createPipelineDealAction(submittedDate?: string) {
   const user = await getScopedUser();
-  return createPipelineDeal(user.companyId, user.id);
+  return createPipelineDeal(user.companyId, user.id, submittedDate);
 }
 
 export async function updatePipelineDealAction(id: string, patch: Partial<PipelineDeal>) {
@@ -88,4 +91,14 @@ export async function resetWorkspaceAction() {
 export async function updateFinancialVisibilityAction(hideFinancialsByDefault: boolean) {
   const user = await getScopedUser();
   return updateViewerPreferences(user.id, { hideFinancialsByDefault });
+}
+
+export async function restoreTrashRecordAction(type: TrashRecordType, id: string) {
+  const user = await getScopedUser();
+  await restoreTrashRecord(user.companyId, type, id);
+}
+
+export async function permanentlyDeleteTrashRecordAction(type: TrashRecordType, id: string) {
+  const user = await getScopedUser();
+  await permanentlyDeleteTrashRecord(user.companyId, type, id);
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, BookOpen, Calculator, DatabaseBackup, HandCoins, LogOut, PhoneCall, RefreshCcw, Settings, ShieldCheck } from "lucide-react";
+import { BarChart3, BookOpen, Calculator, DatabaseBackup, HandCoins, LogOut, PhoneCall, RefreshCcw, Settings, ShieldCheck, Trash2 } from "lucide-react";
 import { logoutAction } from "@/app/login/actions";
 import { useDealdash } from "./state";
 
@@ -13,6 +13,7 @@ const navItems = [
   { href: "/follow-ups", label: "Follow-Ups", icon: PhoneCall },
   { href: "/rate-calculator", label: "Rate Calculator", icon: Calculator },
   { href: "/imports", label: "Imports", icon: DatabaseBackup },
+  { href: "/trash", label: "Trash", icon: Trash2 },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/docs", label: "Docs", icon: BookOpen },
 ];

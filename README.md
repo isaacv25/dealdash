@@ -30,6 +30,9 @@ DealDash is a production-shaped MCA operating system that now combines:
 - Admin-only user count/list view for Ethan's admin account
 - Settings page for name, username, company name, and password updates
 - Month filters on funded progress and pipeline views
+- Date-on-add controls for funded deals and pipeline leads so future months populate naturally
+- Funded progress tag filters/chips for clawback, paid + EPA, paid in full, active, commission, and potential renewal
+- Trash recovery for deleted funded deals, pipeline leads, and follow-ups for 30 calendar days
 
 ## Local development
 
@@ -46,6 +49,8 @@ pnpm install
 pnpm prisma:push
 pnpm dev
 ```
+
+The active Prisma schema is `frontend/prisma/schema.prisma`. Run `pnpm prisma:push` from `frontend/` after schema changes and never commit database URLs or generated `.env` files.
 
 ## Required environment variables
 

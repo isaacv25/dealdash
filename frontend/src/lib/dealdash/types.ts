@@ -1,6 +1,7 @@
 export type PaymentFrequency = "daily" | "weekly" | "monthly";
 export type TermUnit = "days" | "weeks" | "months";
 export type CommissionStatus = "pending" | "paid-out" | "clawback";
+export type FundedTag = "clawback" | "paid-epa" | "paid-in-full" | "active" | "commission" | "potential-renewal";
 export type PipelineStage =
   | "new-lead"
   | "submitted"
@@ -35,10 +36,12 @@ export interface FundedDeal {
   clawbackAmount: number;
   statusRaw: string;
   statusStage: "active" | "paid-out" | "clawback" | "slow-pay" | "watch";
+  fundedTags: FundedTag[];
   notes: string;
   sourceLabel: string;
   manualBalanceRemaining?: number;
   manualRenewalDate?: string;
+  deletedAt?: string;
 }
 
 export interface PipelineDeal {
@@ -59,6 +62,7 @@ export interface PipelineDeal {
   sheetLabel: string;
   nextFollowUpDate?: string;
   sourceLabel: string;
+  deletedAt?: string;
 }
 
 export interface FollowUpItem {
@@ -76,6 +80,18 @@ export interface FollowUpItem {
   completed: boolean;
   sheetLabel: string;
   sourceLabel: string;
+  deletedAt?: string;
+}
+
+export type TrashRecordType = "funded" | "pipeline" | "follow-up";
+
+export interface TrashRecord {
+  id: string;
+  type: TrashRecordType;
+  label: string;
+  detail: string;
+  deletedAt: string;
+  daysRemaining: number;
 }
 
 export interface ImportBatch {

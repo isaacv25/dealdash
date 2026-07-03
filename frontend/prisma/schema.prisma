@@ -80,14 +80,17 @@ model FundedDeal {
   clawbackAmount         Float     @default(0)
   statusRaw              String    @default("Active")
   statusStage            String    @default("active")
+  fundedTags             String[]  @default([])
   notes                  String    @default("")
   sourceLabel            String    @default("manual")
   manualBalanceRemaining Float?
   manualRenewalDate      DateTime?
+  deletedAt              DateTime?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
   @@index([companyId, fundedDate])
+  @@index([companyId, deletedAt])
 }
 
 model PipelineDeal {
@@ -114,10 +117,12 @@ model PipelineDeal {
   sheetLabel         String    @default("")
   nextFollowUpDate   DateTime?
   sourceLabel        String    @default("manual")
+  deletedAt          DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
   @@index([companyId, stage])
+  @@index([companyId, deletedAt])
 }
 
 model FollowUpItem {
@@ -141,10 +146,12 @@ model FollowUpItem {
   completed        Boolean   @default(false)
   sheetLabel       String    @default("")
   sourceLabel      String    @default("manual")
+  deletedAt        DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@index([companyId, completed])
+  @@index([companyId, deletedAt])
 }
 
 model ImportBatch {

@@ -12,6 +12,8 @@ DealDash is now multi-tenant at the company level.
 - `FollowUpItem`: company-owned contact queue entries.
 - `ImportBatch`: company-owned audit trail for CSV imports.
 
+`FundedDeal`, `PipelineDeal`, and `FollowUpItem` are soft-deleted with `deletedAt`. Standard workspace reads filter `deletedAt = null`; the Trash page reads rows deleted within the last 30 calendar days and can either clear `deletedAt` to restore them or permanently delete them.
+
 ## Authentication and account fields
 
 ### User
@@ -53,9 +55,13 @@ DealDash is now multi-tenant at the company level.
 - `clawbackAmount`
 - `statusRaw`
 - `statusStage`
+- `fundedTags`
 - `manualBalanceRemaining`
 - `manualRenewalDate`
+- `deletedAt`
 - `notes`
+
+`fundedTags` stores manually selected operational tags. The UI can also infer display tags from status, commission state, progress math, notes, and renewal timing. Clawback styling takes priority over paid-in-full, and paid-in-full takes priority over active.
 
 ## Commission payout statuses
 
@@ -81,6 +87,8 @@ The Settings page updates profile and company fields through server actions. Use
 ## Date tracking
 
 Funded deals use `fundedDate` for month filtering. Pipeline deals use `submittedDate`, which comes from the `Date App` CSV column. Rows without a usable date stay available under an `Unknown date` bucket.
+
+Manual funded and pipeline adds prompt for a date before creating the row. Month filter dropdowns include all months found in data plus the current month and the next 12 months, so future buckets appear as the business grows. Empty stage/tag filter sets mean "show all", not "show none".
 
 ## Import dedupe model
 

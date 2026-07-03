@@ -21,7 +21,7 @@ import {
   progressForFundedDeal,
   renewalDateForFundedDeal,
 } from "@/lib/dealdash";
-import type { FollowUpItem, FundedDeal, ImportBatch, PipelineStage } from "@/lib/dealdash";
+import type { FollowUpItem, FundedDeal, FundedTag, ImportBatch, PipelineStage } from "@/lib/dealdash";
 import { CalendarClock, Copy, Download, Eye, EyeOff, Plus, Trash2, Upload } from "lucide-react";
 import { useDealdash } from "./state";
 
@@ -47,6 +47,17 @@ const stages: Array<{ key: PipelineStage; label: string }> = [
   { key: "dead", label: "Dead" },
   { key: "renewal", label: "Renewal" },
 ];
+
+const fundedTagOptions: Array<{ key: FundedTag; label: string }> = [
+  { key: "clawback", label: "Clawback" },
+  { key: "paid-epa", label: "Paid + EPA" },
+  { key: "paid-in-full", label: "Paid in full" },
+  { key: "active", label: "Active" },
+  { key: "commission", label: "Commission" },
+  { key: "potential-renewal", label: "Potential renewal" },
+];
+
+const defaultHiddenDashboardMetrics = { fundedVolume: true, grossPayback: true, commission: true, followUps: false };
 
 function formatCurrency(value?: number) {
   return currencyFormatter.format(value || 0);
@@ -87,6 +98,11 @@ function getMonthLabel(key: string) {
 function buildMonthOptions<T>(items: T[], getDate: (item: T) => string | undefined) {
   // Keep undated CSV/manual rows visible instead of letting month filters hide them forever.
   const keys = new Set(items.map((item) => getMonthKey(getDate(item))));
+  const today = new Date();
+  for (let offset = 0; offset <= 12; offset += 1) {
+    const future = new Date(today.getFullYear(), today.getMonth() + offset, 1);
+    keys.add(`${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, "0")}`);
+  }
   return Array.from(keys)
     .sort((left, right) => {
       if (left === "unknown") return 1;
@@ -94,6 +110,14 @@ function buildMonthOptions<T>(items: T[], getDate: (item: T) => string | undefin
       return right.localeCompare(left);
     })
     .map((key) => ({ key, label: getMonthLabel(key) }));
+}
+
+function dateInputToIso(value: string) {
+  return value ? `${value}T00:00:00.000Z` : undefined;
+}
+
+function todayDateInput() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function toDateInput(value?: string) {
@@ -231,6 +255,46 @@ function CommissionBadge({ status }: { status: FundedDeal["commissionStatus"] })
   return <span className={`pill ${config.tone}`}>{config.label}</span>;
 }
 
+function tagsForFundedDeal(deal: FundedDeal): FundedTag[] {
+  const tags = new Set<FundedTag>(deal.fundedTags || []);
+  const progress = progressForFundedDeal(deal);
+  const raw = `${deal.statusRaw} ${deal.notes}`.toLowerCase();
+  const renewalDate = renewalDateForFundedDeal(deal);
+
+  if (deal.statusStage === "clawback" || deal.commissionStatus === "clawback" || raw.includes("clawback")) tags.add("clawback");
+  if (raw.includes("epa")) tags.add("paid-epa");
+  if (progress.totalPeriods > 0 && progress.paymentsRemaining === 0) tags.add("paid-in-full");
+  if (deal.statusStage === "active" && progress.paymentsRemaining > 0) tags.add("active");
+  if (deal.commissionStatus === "paid-out" || deal.commissionAmount > 0) tags.add("commission");
+  if (renewalDate) {
+    const diff = new Date(renewalDate).getTime() - Date.now();
+    if (diff >= 0 && diff <= 1000 * 60 * 60 * 24 * 60) tags.add("potential-renewal");
+  }
+
+  return Array.from(tags);
+}
+
+function fundedTintClass(tags: FundedTag[]) {
+  // Tint priority intentionally mirrors business urgency: clawback > paid in full > active.
+  if (tags.includes("clawback")) return "border-red-200 bg-red-50/88";
+  if (tags.includes("paid-in-full")) return "border-emerald-200 bg-emerald-50/88";
+  if (tags.includes("active")) return "border-blue-200 bg-blue-50/88";
+  return "border-white/80 bg-white/80";
+}
+
+function tagBadgeClass(tag: FundedTag) {
+  if (tag === "clawback") return "bg-red-100 text-red-700";
+  if (tag === "paid-in-full") return "bg-emerald-100 text-emerald-700";
+  if (tag === "active") return "bg-blue-100 text-blue-700";
+  if (tag === "commission") return "bg-teal-100 text-teal-700";
+  if (tag === "paid-epa") return "bg-lime-100 text-lime-700";
+  return "bg-amber-100 text-amber-700";
+}
+
+function toggleFundedTag(tags: FundedTag[], tag: FundedTag) {
+  return tags.includes(tag) ? tags.filter((current) => current !== tag) : [...tags, tag];
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export function DashboardView() {
@@ -238,11 +302,11 @@ export function DashboardView() {
   const [today] = useState(() => Date.now());
   const [hiddenMetrics, setHiddenMetrics] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") {
-      return showFinancials ? {} : { fundedVolume: true, grossPayback: true, commission: true, followUps: false };
+      return showFinancials ? {} : defaultHiddenDashboardMetrics;
     }
     const saved = window.localStorage.getItem("dealdash.dashboard.hiddenMetrics");
     if (!saved) {
-      return showFinancials ? {} : { fundedVolume: true, grossPayback: true, commission: true, followUps: false };
+      return showFinancials ? {} : defaultHiddenDashboardMetrics;
     }
     try {
       return JSON.parse(saved) as Record<string, boolean>;
@@ -485,6 +549,8 @@ export function FundedProgressView() {
   const { data, addFundedDeal, updateFundedDeal, deleteFundedDeal } = useDealdash();
   const [query, setQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState("all");
+  const [newFundedDate, setNewFundedDate] = useState(todayDateInput());
+  const [activeTags, setActiveTags] = useState<Set<FundedTag>>(new Set());
   const deferredQuery = useDeferredValue(query);
   const monthOptions = useMemo(
     () => buildMonthOptions(data.fundedDeals, (deal) => deal.fundedDate),
@@ -495,14 +561,26 @@ export function FundedProgressView() {
     () =>
       data.fundedDeals.filter((deal) => {
         const matchesMonth = activeMonth === "all" || getMonthKey(deal.fundedDate) === activeMonth;
+        const dealTags = tagsForFundedDeal(deal);
+        const matchesTags =
+          activeTags.size === 0 || Array.from(activeTags).every((tag) => dealTags.includes(tag));
         const matchesQuery = [deal.businessName, deal.contactName, deal.funder, deal.statusRaw]
           .join(" ")
           .toLowerCase()
           .includes(deferredQuery.toLowerCase());
-        return matchesMonth && matchesQuery;
+        return matchesMonth && matchesTags && matchesQuery;
       }),
-    [data.fundedDeals, deferredQuery, activeMonth],
+    [data.fundedDeals, deferredQuery, activeMonth, activeTags],
   );
+
+  function toggleActiveTag(tag: FundedTag) {
+    setActiveTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  }
 
   /** When house points % or broker split % changes, auto-calc commission $. */
   function updateWithCommissionCalc(
@@ -538,7 +616,7 @@ export function FundedProgressView() {
             placeholder="Search funded deals..."
           />
           <select
-            className="field min-w-[170px] text-sm"
+            className="field max-h-64 min-w-[170px] text-sm"
             value={activeMonth}
             onChange={(e) => setActiveMonth(e.target.value)}
           >
@@ -549,9 +627,18 @@ export function FundedProgressView() {
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+            Funded date
+            <input
+              className="field min-w-[150px] text-sm"
+              type="date"
+              value={newFundedDate}
+              onChange={(e) => setNewFundedDate(e.target.value)}
+            />
+          </label>
           <button
             className="ghost-button flex items-center gap-2 text-sm"
-            onClick={() => addFundedDeal()}
+            onClick={() => addFundedDeal(dateInputToIso(newFundedDate))}
             type="button"
           >
             <Plus className="h-4 w-4" />
@@ -590,10 +677,43 @@ export function FundedProgressView() {
       }
     >
       <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+            Tags
+          </span>
+          {fundedTagOptions.map((tag) => (
+            <button
+              key={tag.key}
+              className={`pill transition ${
+                activeTags.has(tag.key)
+                  ? tagBadgeClass(tag.key)
+                  : "bg-white/72 text-[var(--muted)] hover:bg-white"
+              }`}
+              onClick={() => toggleActiveTag(tag.key)}
+              type="button"
+            >
+              {tag.label}
+            </button>
+          ))}
+          {(activeTags.size > 0 || activeMonth !== "all" || query) && (
+            <button
+              className="ghost-button px-3 py-1.5 text-xs"
+              onClick={() => {
+                setActiveTags(new Set());
+                setActiveMonth("all");
+                setQuery("");
+              }}
+              type="button"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
         {filteredDeals.length === 0 && (
           <p className="py-10 text-center text-sm text-[var(--muted)]">No funded deals match your search.</p>
         )}
         {filteredDeals.map((deal) => {
+          const tags = tagsForFundedDeal(deal);
           const progress = progressForFundedDeal(deal);
           const renewalDate = renewalDateForFundedDeal(deal);
           const houseAmt = deal.fundedAmount * deal.housePointsPercent;
@@ -606,7 +726,7 @@ export function FundedProgressView() {
           return (
             <article
               key={deal.id}
-              className="rounded-[1.75rem] border border-white/80 bg-white/80 shadow-[0_8px_32px_rgba(21,42,74,0.07)] overflow-hidden"
+              className={`overflow-hidden rounded-[1.75rem] border shadow-[0_8px_32px_rgba(21,42,74,0.07)] ${fundedTintClass(tags)}`}
             >
               {/* ── Card header ── */}
               <div className="flex items-start justify-between gap-4 px-5 pt-5">
@@ -614,6 +734,11 @@ export function FundedProgressView() {
                   <div className="flex items-center gap-3 flex-wrap">
                     <StatusBadge stage={deal.statusStage} />
                     <CommissionBadge status={deal.commissionStatus} />
+                    {tags.map((tag) => (
+                      <span key={tag} className={`pill text-xs ${tagBadgeClass(tag)}`}>
+                        {fundedTagOptions.find((option) => option.key === tag)?.label ?? tag}
+                      </span>
+                    ))}
                     <input
                       className="field flex-1 min-w-[200px] text-base font-semibold"
                       value={deal.businessName}
@@ -643,7 +768,9 @@ export function FundedProgressView() {
                 <button
                   className="delete-button shrink-0 mt-1"
                   onClick={() => {
-                    if (confirm(`Delete ${deal.businessName}?`)) deleteFundedDeal(deal.id);
+                    if (confirm(`Move ${deal.businessName || "this funded deal"} to Trash? You can restore it for 30 days.`)) {
+                      deleteFundedDeal(deal.id);
+                    }
                   }}
                   title="Delete deal"
                   type="button"
@@ -815,6 +942,18 @@ export function FundedProgressView() {
                   Additional
                 </p>
                 <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+                  <DealField label="Funded Date">
+                    <input
+                      className="field w-full text-sm"
+                      type="date"
+                      value={toDateInput(deal.fundedDate)}
+                      onChange={(e) =>
+                        updateFundedDeal(deal.id, {
+                          fundedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined,
+                        })
+                      }
+                    />
+                  </DealField>
                   <DealField label="Synd %">
                     <input
                       className="field w-full text-sm"
@@ -873,6 +1012,33 @@ export function FundedProgressView() {
                       placeholder="Notes..."
                     />
                   </DealField>
+                  <div className="col-span-2 flex flex-col gap-2 sm:col-span-4">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted)]">
+                      Tags
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {fundedTagOptions.map((tag) => {
+                        const persistedTags = deal.fundedTags || [];
+                        const selected = persistedTags.includes(tag.key);
+                        return (
+                          <button
+                            key={tag.key}
+                            className={`pill transition ${
+                              selected ? tagBadgeClass(tag.key) : "bg-white/72 text-[var(--muted)] hover:bg-white"
+                            }`}
+                            onClick={() =>
+                              updateFundedDeal(deal.id, {
+                                fundedTags: toggleFundedTag(persistedTags, tag.key),
+                              })
+                            }
+                            type="button"
+                          >
+                            {tag.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
             </article>
@@ -889,9 +1055,8 @@ export function PipelineView() {
   const { data, addPipelineDeal, updatePipelineDeal, deletePipelineDeal } = useDealdash();
   const [query, setQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState("all");
-  const [activeStages, setActiveStages] = useState<Set<PipelineStage>>(
-    new Set(["new-lead", "submitted", "in-review", "approved", "contract-out"]),
-  );
+  const [newPipelineDate, setNewPipelineDate] = useState(todayDateInput());
+  const [activeStages, setActiveStages] = useState<Set<PipelineStage>>(new Set());
   const deferredQuery = useDeferredValue(query);
   const monthOptions = useMemo(
     () => buildMonthOptions(data.pipelineDeals, (deal) => deal.submittedDate),
@@ -903,7 +1068,7 @@ export function PipelineView() {
       data.pipelineDeals.filter(
         (deal) =>
           (activeMonth === "all" || getMonthKey(deal.submittedDate) === activeMonth) &&
-          activeStages.has(deal.stage) &&
+          (activeStages.size === 0 || activeStages.has(deal.stage)) &&
           [deal.businessName, deal.contactName, deal.statusRaw, deal.notes]
             .join(" ")
             .toLowerCase()
@@ -938,7 +1103,7 @@ export function PipelineView() {
             placeholder="Search pipeline"
           />
           <select
-            className="field min-w-[170px] text-sm"
+            className="field max-h-64 min-w-[170px] text-sm"
             value={activeMonth}
             onChange={(e) => setActiveMonth(e.target.value)}
           >
@@ -949,9 +1114,18 @@ export function PipelineView() {
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+            Lead date
+            <input
+              className="field min-w-[150px] text-sm"
+              type="date"
+              value={newPipelineDate}
+              onChange={(e) => setNewPipelineDate(e.target.value)}
+            />
+          </label>
           <button
             className="ghost-button flex items-center gap-2 text-sm"
-            onClick={() => addPipelineDeal()}
+            onClick={() => addPipelineDeal(dateInputToIso(newPipelineDate))}
             type="button"
           >
             <Plus className="h-4 w-4" />
@@ -962,6 +1136,9 @@ export function PipelineView() {
     >
       {/* Stage filter chips */}
       <div className="mb-4 flex flex-wrap gap-2">
+        <span className="self-center text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+          Stage filters
+        </span>
         {stages.map((s) => (
           <button
             key={s.key}
@@ -976,11 +1153,24 @@ export function PipelineView() {
             {s.label} ({data.pipelineDeals.filter((d) => d.stage === s.key).length})
           </button>
         ))}
+        {(activeStages.size > 0 || activeMonth !== "all" || query) && (
+          <button
+            className="ghost-button px-3 py-1.5 text-xs"
+            onClick={() => {
+              setActiveStages(new Set());
+              setActiveMonth("all");
+              setQuery("");
+            }}
+            type="button"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
         {stages
-          .filter((s) => activeStages.has(s.key))
+          .filter((s) => activeStages.size === 0 || activeStages.has(s.key))
           .map((stage) => {
             const stageDeals = filtered.filter((deal) => deal.stage === stage.key);
             return (
@@ -1017,8 +1207,9 @@ export function PipelineView() {
                         <button
                           className="delete-button mt-1 shrink-0"
                           onClick={() => {
-                            if (confirm(`Delete ${deal.businessName}?`))
+                            if (confirm(`Move ${deal.businessName || "this pipeline lead"} to Trash? You can restore it for 30 days.`)) {
                               deletePipelineDeal(deal.id);
+                            }
                           }}
                           title="Delete"
                           type="button"
@@ -1068,6 +1259,17 @@ export function PipelineView() {
                         placeholder="Notes"
                       />
                       <div className="mt-2 grid gap-2 grid-cols-2">
+                        <input
+                          className="field text-sm"
+                          type="date"
+                          value={toDateInput(deal.submittedDate)}
+                          onChange={(e) =>
+                            updatePipelineDeal(deal.id, {
+                              submittedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined,
+                            })
+                          }
+                          title="Lead date"
+                        />
                         <input
                           className="field text-sm"
                           type="date"
@@ -1253,7 +1455,9 @@ export function FollowUpsView() {
             <button
               className="delete-button h-[40px] w-[40px]"
               onClick={() => {
-                if (confirm(`Delete ${item.contactName}?`)) deleteFollowUp(item.id);
+                if (confirm(`Move ${item.contactName || "this follow-up"} to Trash? You can restore it for 30 days.`)) {
+                  deleteFollowUp(item.id);
+                }
               }}
               title="Delete"
               type="button"

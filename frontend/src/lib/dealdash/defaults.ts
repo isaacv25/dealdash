@@ -1,12 +1,11 @@
 import type { FollowUpItem, FundedDeal, PipelineDeal } from "./types";
 
-export function createBlankFundedDeal(): FundedDeal {
-  const now = new Date().toISOString();
+export function createBlankFundedDeal(fundedDate = new Date().toISOString()): FundedDeal {
   return {
     id: "",
     businessName: "New funded deal",
     contactName: "Brokered contact",
-    fundedDate: now,
+    fundedDate,
     fundedAmount: 0,
     factorRate: 1.35,
     termValue: 24,
@@ -22,16 +21,18 @@ export function createBlankFundedDeal(): FundedDeal {
     clawbackAmount: 0,
     statusRaw: "Active",
     statusStage: "active",
+    fundedTags: ["active"],
     notes: "",
     sourceLabel: "manual",
   };
 }
 
-export function createBlankPipelineDeal(): PipelineDeal {
+export function createBlankPipelineDeal(submittedDate?: string): PipelineDeal {
   return {
     id: "",
     contactName: "New lead",
     businessName: "Untitled business",
+    submittedDate,
     requestLabel: "",
     statusRaw: "New Lead",
     stage: "new-lead",
