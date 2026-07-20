@@ -102,8 +102,12 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
   const periodicPayment = periodicPaymentFromDeal(deal);
   const totalPeriods = periodsForTerm(deal.termValue, deal.termUnit, deal.paymentFrequency);
 
-  if (deal.manualBalanceRemaining != undefined) {
-    const paid = Math.max(0, grossPayback - deal.manualBalanceRemaining);
+  // balanceOverrideAmount (Override Calculated Balance) takes priority over the legacy
+  // manualBalanceRemaining field it superseded -- both represent the same "manual override" concept.
+  const manualBalance = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining;
+
+  if (manualBalance != undefined) {
+    const paid = Math.max(0, grossPayback - manualBalance);
     const estimatedPeriodsPaid = periodicPayment > 0 ? Math.min(totalPeriods, Math.round(paid / periodicPayment)) : 0;
     return {
       grossPayback,
@@ -112,7 +116,7 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
       completedPeriods: estimatedPeriodsPaid,
       paymentsRemaining: Math.max(0, totalPeriods - estimatedPeriodsPaid),
       paidAmount: roundCurrency(paid),
-      balanceRemaining: roundCurrency(Math.max(0, deal.manualBalanceRemaining)),
+      balanceRemaining: roundCurrency(Math.max(0, manualBalance)),
       progressPercent: grossPayback ? Math.min(100, Math.round((paid / grossPayback) * 100)) : 0,
       usesManualBalance: true,
     };

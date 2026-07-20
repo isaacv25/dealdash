@@ -59,13 +59,32 @@ dealdash/
 
 ## Funded progress calculations
 
-- Gross payback = `fundedAmount * factorRate`.
-- If a manual balance override is present, that value wins.
-- Otherwise DealDash estimates progress from funded date, payment cadence, and periodic payment amount.
+- Gross payback = `fundedAmount * factorRate`, computed in integer cents (`frontend/src/lib/dealdash/finance.ts`) so results never drift from JS float rounding.
+- If a balance override is present (`balanceOverrideAmount`, or the legacy `manualBalanceRemaining` for deals that predate it), that value wins for the progress bar and "remaining" figure.
+- Otherwise DealDash estimates progress from funded date, payment cadence, and periodic payment amount -- this is a deliberate, documented estimate, not the schedule-backed authoritative balance.
+- Deals with a persisted payment schedule (see below) have a second, more precise balance available in the "Advanced adjustments" panel: calculated from actual posted `PaymentScheduleEntry` rows rather than elapsed-time estimation.
 - Renewal timing still defaults to 70% of the term unless manually overridden.
 - Commission payout status is tracked separately from the funded file status.
 - Funded tags are persisted on `fundedTags` and augmented at render time from obvious status/math signals.
 - Tag tint priority is deliberate: clawback red wins, then paid-in-full green, then active blue.
+
+## Payment schedule, adjustments, and cron automation
+
+See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. Summary:
+
+- Every funded deal can have a persisted `PaymentScheduleEntry` per contractual payment, generated or
+  recast via the "Recalculate schedule" button on the deal card (`frontend/src/lib/dealdash/schedule.ts`
+  for the pure date/amount math, `schedule-service.ts` for the Prisma-backed read/write layer).
+- Weekly deals pick a payment weekday; daily deals post on business days only (no holiday calendar).
+- `/api/cron/post-payments`, called hourly by Vercel Cron and protected by `CRON_SECRET`, posts every
+  due-or-overdue pending entry, timezone-aware via `frontend/src/lib/dealdash/timezone.ts`
+  (America/New_York, DST-safe), and is idempotent by design (compare-and-swap updates keyed on
+  `status: "pending"`).
+- Users can apply a lowered-payment period or a pause (`PaymentAdjustment`) from the deal card; both
+  require a reason and are recorded in an append-only `AuditEntry` history.
+- The old unlabeled "Balance Override $" field is now "Override Calculated Balance" inside a
+  collapsed-by-default "Advanced adjustments" section, requires an effective date and reason, and
+  shows calculated vs. overridden vs. difference explicitly.
 
 ## Hidden financials behavior
 
@@ -91,14 +110,33 @@ dealdash/
 - Manual add/edit/delete calls are persisted through server actions, not local storage.
 - Delete buttons soft-delete records into Trash rather than immediately removing them from Postgres.
 
+## Testing
+
+`frontend/src/lib/dealdash/__tests__/*.test.ts` covers the pure calculation, schedule-generation, and
+timezone logic using Node's built-in test runner (no new test framework dependency). Run from
+`frontend/`:
+
+```powershell
+pnpm test
+```
+
+`pnpm build` runs `pnpm test` first and fails the build if any test fails -- this is the quality gate
+for the calculation/scheduling engine, since it has no UI to eyeball for correctness. Tests deliberately
+do not touch Postgres (they exercise `finance.ts`, `schedule.ts`, and `timezone.ts` only, which are
+pure functions); `schedule-service.ts` (the Prisma-backed layer) is exercised through manual/preview
+verification instead, per `docs/VERCEL_DEPLOYMENT.md`.
+
 ## Continuing the project
 
 Future Codex or developer sessions should start with these files first:
 
+- `frontend/src/lib/dealdash/finance.ts` and `schedule.ts` (pure calculation/scheduling engine)
+- `frontend/src/lib/dealdash/schedule-service.ts` (Prisma-backed read/write layer, cron poster)
 - `frontend/src/lib/dealdash/workspace.ts`
 - `frontend/src/lib/auth.ts`
 - `frontend/prisma/schema.prisma`
 - `frontend/src/components/dealdash/state.tsx`
 - `frontend/src/components/dealdash/views.tsx`
+- `frontend/src/components/dealdash/funded-deal-panel.tsx` (schedule/adjustments/override UI)
 - `docs/DATA_MODEL.md`
 - `docs/VERCEL_DEPLOYMENT.md`

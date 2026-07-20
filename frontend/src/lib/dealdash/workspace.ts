@@ -53,6 +53,14 @@ function serializeFundedDeal(record: Prisma.FundedDealGetPayload<object>): Funde
     manualBalanceRemaining: record.manualBalanceRemaining ?? undefined,
     manualRenewalDate: toIso(record.manualRenewalDate),
     deletedAt: toIso(record.deletedAt),
+    paymentWeekday: record.paymentWeekday ?? undefined,
+    firstPaymentDate: toIso(record.firstPaymentDate),
+    scheduleCompletedAt: toIso(record.scheduleCompletedAt),
+    balanceOverrideAmount: record.balanceOverrideCents != null ? record.balanceOverrideCents / 100 : undefined,
+    balanceOverrideEffectiveDate: toIso(record.balanceOverrideEffectiveDate),
+    balanceOverrideReason: record.balanceOverrideReason ?? undefined,
+    balanceOverrideSetByUserId: record.balanceOverrideSetByUserId ?? undefined,
+    balanceOverrideSetAt: toIso(record.balanceOverrideSetAt),
   };
 }
 
@@ -313,6 +321,11 @@ function fundedUpdateData(patch: Partial<FundedDeal>, userId: string): Prisma.Fu
     ...(patch.sourceLabel !== undefined ? { sourceLabel: patch.sourceLabel } : {}),
     ...(patch.manualBalanceRemaining !== undefined ? { manualBalanceRemaining: patch.manualBalanceRemaining ?? null } : {}),
     ...(patch.manualRenewalDate !== undefined ? { manualRenewalDate: patch.manualRenewalDate ? new Date(patch.manualRenewalDate) : null } : {}),
+    ...(patch.paymentWeekday !== undefined ? { paymentWeekday: patch.paymentWeekday ?? null } : {}),
+    ...(patch.firstPaymentDate !== undefined ? { firstPaymentDate: patch.firstPaymentDate ? new Date(patch.firstPaymentDate) : null } : {}),
+    // balanceOverride* fields are intentionally excluded here: they may only be written through
+    // setBalanceOverride/resetBalanceOverride (schedule-service.ts), which enforce an effective
+    // date, a reason, and an audit-trail entry. A generic field patch must never bypass that.
   };
 }
 
@@ -357,7 +370,7 @@ function followUpUpdateData(patch: Partial<FollowUpItem>, userId: string): Prism
   };
 }
 
-async function requireOwnedFundedDeal(companyId: string, id: string) {
+export async function requireOwnedFundedDeal(companyId: string, id: string) {
   const record = await prisma.fundedDeal.findFirst({ where: { id, companyId } });
   if (!record) throw new Error("Funded deal not found for this company.");
 }

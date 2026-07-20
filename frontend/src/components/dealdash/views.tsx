@@ -24,16 +24,14 @@ import {
 import type { FollowUpItem, FundedDeal, FundedTag, ImportBatch, PipelineStage } from "@/lib/dealdash";
 import { CalendarClock, Copy, Download, Eye, EyeOff, Plus, Trash2, Upload } from "lucide-react";
 import { useDealdash } from "./state";
+import { formatCurrency, formatDate, dateInputToIso, toDateInput } from "@/lib/dealdash/format";
+import { MAX_SYNDICATION_PERCENT, MIN_SYNDICATION_PERCENT, normalizeSyndicationPercent, termUnitForFrequency } from "@/lib/dealdash/finance";
+import { DecimalField } from "./inputs";
+import { FundedDealAdvancedPanel } from "./funded-deal-panel";
 
 // ─── formatters ──────────────────────────────────────────────────────────────
 
 const numberFormatter = new Intl.NumberFormat("en-US");
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-});
-const dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" });
 
 const stages: Array<{ key: PipelineStage; label: string }> = [
@@ -59,10 +57,6 @@ const fundedTagOptions: Array<{ key: FundedTag; label: string }> = [
 
 const defaultHiddenDashboardMetrics = { fundedVolume: true, grossPayback: true, commission: true, followUps: false };
 
-function formatCurrency(value?: number) {
-  return currencyFormatter.format(value || 0);
-}
-
 function hiddenCurrency(showFinancials: boolean, value?: number) {
   return showFinancials ? formatCurrency(value) : "•••••";
 }
@@ -73,13 +67,6 @@ function formatNumber(value?: number) {
 
 function formatPercent(value?: number) {
   return `${((value || 0) * 100).toFixed(1)}%`;
-}
-
-function formatDate(value?: string) {
-  if (!value) return "TBD";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return dateFormatter.format(parsed);
 }
 
 function getMonthKey(value?: string) {
@@ -112,27 +99,8 @@ function buildMonthOptions<T>(items: T[], getDate: (item: T) => string | undefin
     .map((key) => ({ key, label: getMonthLabel(key) }));
 }
 
-function dateInputToIso(value: string) {
-  return value ? `${value}T00:00:00.000Z` : undefined;
-}
-
 function todayDateInput() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function toDateInput(value?: string) {
-  if (!value) return "";
-  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
-
-  const dateMatch = value.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-  if (dateMatch) {
-    const [, month, day, year] = dateMatch;
-    const normalizedYear = year.length === 2 ? `20${year}` : year;
-    return `${normalizedYear}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
 }
 
 function downloadCsv(filename: string, headers: string[], rows: string[][]) {
@@ -557,20 +525,36 @@ export function FundedProgressView() {
     [data.fundedDeals],
   );
 
-  const filteredDeals = useMemo(
+  const monthAndQueryFilteredDeals = useMemo(
     () =>
       data.fundedDeals.filter((deal) => {
         const matchesMonth = activeMonth === "all" || getMonthKey(deal.fundedDate) === activeMonth;
-        const dealTags = tagsForFundedDeal(deal);
-        const matchesTags =
-          activeTags.size === 0 || Array.from(activeTags).every((tag) => dealTags.includes(tag));
         const matchesQuery = [deal.businessName, deal.contactName, deal.funder, deal.statusRaw]
           .join(" ")
           .toLowerCase()
           .includes(deferredQuery.toLowerCase());
-        return matchesMonth && matchesTags && matchesQuery;
+        return matchesMonth && matchesQuery;
       }),
-    [data.fundedDeals, deferredQuery, activeMonth, activeTags],
+    [data.fundedDeals, deferredQuery, activeMonth],
+  );
+
+  const tagCounts = useMemo(() => {
+    const counts = new Map<FundedTag, number>();
+    for (const deal of monthAndQueryFilteredDeals) {
+      for (const tag of tagsForFundedDeal(deal)) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [monthAndQueryFilteredDeals]);
+
+  const filteredDeals = useMemo(
+    () =>
+      monthAndQueryFilteredDeals.filter((deal) => {
+        const dealTags = tagsForFundedDeal(deal);
+        return activeTags.size === 0 || Array.from(activeTags).every((tag) => dealTags.includes(tag));
+      }),
+    [monthAndQueryFilteredDeals, activeTags],
   );
 
   function toggleActiveTag(tag: FundedTag) {
@@ -677,24 +661,30 @@ export function FundedProgressView() {
       }
     >
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-            Tags
-          </span>
-          {fundedTagOptions.map((tag) => (
-            <button
-              key={tag.key}
-              className={`pill transition ${
-                activeTags.has(tag.key)
-                  ? tagBadgeClass(tag.key)
-                  : "bg-white/72 text-[var(--muted)] hover:bg-white"
-              }`}
-              onClick={() => toggleActiveTag(tag.key)}
-              type="button"
-            >
-              {tag.label}
-            </button>
-          ))}
+        <div
+          className="flex flex-wrap items-center gap-2"
+          role="group"
+          aria-label="Filter funded deals by tag"
+        >
+          {fundedTagOptions.map((tag) => {
+            const selected = activeTags.has(tag.key);
+            const count = tagCounts.get(tag.key) ?? 0;
+            return (
+              <button
+                key={tag.key}
+                className={`pill gap-1.5 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent-strong)] ${
+                  selected ? tagBadgeClass(tag.key) : "bg-white/72 text-[var(--muted)] hover:bg-white"
+                }`}
+                onClick={() => toggleActiveTag(tag.key)}
+                type="button"
+                aria-pressed={selected}
+                aria-label={`${tag.label} (${count} deal${count === 1 ? "" : "s"})`}
+              >
+                {tag.label}
+                {count > 0 && <span className="text-[10px] opacity-70">{count}</span>}
+              </button>
+            );
+          })}
           {(activeTags.size > 0 || activeMonth !== "all" || query) && (
             <button
               className="ghost-button px-3 py-1.5 text-xs"
@@ -704,6 +694,7 @@ export function FundedProgressView() {
                 setQuery("");
               }}
               type="button"
+              aria-label="Clear all filters"
             >
               Clear filters
             </button>
@@ -718,10 +709,7 @@ export function FundedProgressView() {
           const renewalDate = renewalDateForFundedDeal(deal);
           const houseAmt = deal.fundedAmount * deal.housePointsPercent;
           const payback = grossPaybackFromDeal(deal);
-          const balance =
-            deal.manualBalanceRemaining !== undefined
-              ? deal.manualBalanceRemaining
-              : progress.balanceRemaining;
+          const balance = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining ?? progress.balanceRemaining;
 
           return (
             <article
@@ -836,42 +824,34 @@ export function FundedProgressView() {
                       placeholder="1.35"
                     />
                   </DealField>
-                  <DealField label="Term">
-                    <input
-                      className="field w-full text-sm"
-                      type="number"
-                      value={deal.termValue || ""}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { termValue: Number(e.target.value) || 0 })
-                      }
-                      placeholder="0"
-                    />
-                  </DealField>
-                  <DealField label="Term Unit">
-                    <select
-                      className="field w-full text-sm"
-                      value={deal.termUnit}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { termUnit: e.target.value as FundedDeal["termUnit"] })
-                      }
-                    >
-                      <option value="days">Days</option>
-                      <option value="weeks">Weeks</option>
-                      <option value="months">Months</option>
-                    </select>
-                  </DealField>
                   <DealField label="Frequency">
                     <select
                       className="field w-full text-sm"
                       value={deal.paymentFrequency}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { paymentFrequency: e.target.value as FundedDeal["paymentFrequency"] })
-                      }
+                      onChange={(e) => {
+                        const frequency = e.target.value as FundedDeal["paymentFrequency"];
+                        // Term unit always tracks payment frequency so a mismatched pair (e.g.
+                        // "weekly" payments over a "months" term) can never be saved.
+                        updateFundedDeal(deal.id, { paymentFrequency: frequency, termUnit: termUnitForFrequency(frequency) });
+                      }}
                     >
                       <option value="daily">Daily</option>
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
                     </select>
+                  </DealField>
+                  <DealField label={`Term (${termUnitForFrequency(deal.paymentFrequency)})`}>
+                    <input
+                      className="field w-full text-sm"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={deal.termValue || ""}
+                      onChange={(e) =>
+                        updateFundedDeal(deal.id, { termValue: Math.max(0, Math.trunc(Number(e.target.value) || 0)) })
+                      }
+                      placeholder="0"
+                    />
                   </DealField>
                   <DealField label="Payment $">
                     <input
@@ -955,28 +935,14 @@ export function FundedProgressView() {
                     />
                   </DealField>
                   <DealField label="Synd %">
-                    <input
-                      className="field w-full text-sm"
-                      step="0.01"
-                      type="number"
-                      value={deal.syndicationPercent > 0 ? (deal.syndicationPercent * 100).toFixed(1) : ""}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { syndicationPercent: (Number(e.target.value) || 0) / 100 })
-                      }
+                    <DecimalField
+                      value={deal.syndicationPercent * 100}
+                      onCommit={(next) => updateFundedDeal(deal.id, { syndicationPercent: normalizeSyndicationPercent(next) })}
+                      suffix="%"
+                      min={MIN_SYNDICATION_PERCENT}
+                      max={MAX_SYNDICATION_PERCENT}
                       placeholder="0"
-                    />
-                  </DealField>
-                  <DealField label="Balance Override $">
-                    <input
-                      className="field w-full text-sm"
-                      type="number"
-                      value={deal.manualBalanceRemaining !== undefined ? deal.manualBalanceRemaining : ""}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, {
-                          manualBalanceRemaining: e.target.value !== "" ? Number(e.target.value) : undefined,
-                        })
-                      }
-                      placeholder={formatCurrency(balance)}
+                      ariaLabel={`Syndication percent for ${deal.businessName || "deal"}`}
                     />
                   </DealField>
                   <DealField label="Renewal Date">
@@ -1041,6 +1007,8 @@ export function FundedProgressView() {
                   </div>
                 </div>
               </div>
+
+              <FundedDealAdvancedPanel deal={deal} />
             </article>
           );
         })}

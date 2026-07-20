@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "pnpm prisma:generate && next dev",
-    "build": "pnpm prisma:generate && next build",
+    "build": "pnpm prisma:generate && pnpm test && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --experimental-strip-types --test src/lib/dealdash/__tests__/*.test.ts",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:push": "prisma db push --schema prisma/schema.prisma",
     "prisma:studio": "prisma studio --schema prisma/schema.prisma",

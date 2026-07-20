@@ -33,6 +33,11 @@ DealDash is a production-shaped MCA operating system that now combines:
 - Date-on-add controls for funded deals and pipeline leads so future months populate naturally
 - Funded progress tag filters/chips for clawback, paid + EPA, paid in full, active, commission, and potential renewal
 - Trash recovery for deleted funded deals, pipeline leads, and follow-ups for 30 calendar days
+- Currency-safe (integer-cents) automatic recalculation of total payback and scheduled payment as deal terms change, with a live preview before saving
+- Server-persisted payment schedules (weekly with a selectable payment day, daily on business days) with automated midnight-America/New_York posting via a protected, idempotent Vercel Cron endpoint
+- Lowered-payment and payment-pause adjustments with required reason/effective date and full audit history
+- "Override Calculated Balance" advanced adjustment (replaces the old unlabeled Balance Override field) showing calculated vs. overridden balance and the difference
+- Direct-typing syndication percentage input (supports decimals like `12.5`)
 
 ## Local development
 
@@ -56,8 +61,18 @@ The active Prisma schema is `frontend/prisma/schema.prisma`. Run `pnpm prisma:pu
 
 - `DATABASE_URL`
 - `SESSION_SECRET`
+- `CRON_SECRET` -- authorizes the automated payment-posting cron endpoint; see `docs/VERCEL_DEPLOYMENT.md`
 
 Do not commit `.env` files or copied database URLs. `.gitignore` excludes local env files; keep live Neon credentials in Vercel env vars or shell-local exports only.
+
+## Testing
+
+```powershell
+cd frontend
+pnpm test
+```
+
+Runs the calculation/scheduling/timezone unit test suite (Node's built-in test runner). `pnpm build` runs this automatically before compiling.
 
 ## Docs
 

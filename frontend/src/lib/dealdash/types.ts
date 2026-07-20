@@ -42,6 +42,14 @@ export interface FundedDeal {
   manualBalanceRemaining?: number;
   manualRenewalDate?: string;
   deletedAt?: string;
+  paymentWeekday?: number;
+  firstPaymentDate?: string;
+  scheduleCompletedAt?: string;
+  balanceOverrideAmount?: number;
+  balanceOverrideEffectiveDate?: string;
+  balanceOverrideReason?: string;
+  balanceOverrideSetByUserId?: string;
+  balanceOverrideSetAt?: string;
 }
 
 export interface PipelineDeal {

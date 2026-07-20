@@ -89,8 +89,131 @@ model FundedDeal {
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
+  // Weekday selected for weekly payment schedules (0 = Sunday .. 6 = Saturday). Null until a
+  // schedule has been generated, at which point it is required for weekly-frequency deals.
+  paymentWeekday Int?
+
+  // Anchor date for the first scheduled payment. Falls back to fundedDate when unset so legacy
+  // deals keep working without a migration backfill.
+  firstPaymentDate DateTime?
+
+  // Marks the deal fully repaid once the persisted schedule balance reaches zero via the cron poster.
+  scheduleCompletedAt DateTime?
+
+  // --- Advanced adjustments: "Override Calculated Balance" ---
+  // Superseded by these fields; manualBalanceRemaining above is kept only as a legacy read-fallback
+  // for deals that predate this feature (see migrateLegacyBalanceOverrides in workspace.ts) and is
+  // never written by new code.
+  balanceOverrideCents          Int?
+  balanceOverrideEffectiveDate  DateTime?
+  balanceOverrideReason         String?
+  balanceOverrideSetByUserId    String?
+  balanceOverrideSetAt          DateTime?
+
+  paymentSchedule PaymentScheduleEntry[]
+  adjustments     PaymentAdjustment[]
+  auditEntries    AuditEntry[]
+
   @@index([companyId, fundedDate])
   @@index([companyId, deletedAt])
+}
+
+enum ScheduleEntryStatus {
+  pending
+  posted
+  skipped
+  paused
+}
+
+/**
+ * One row per contractual payment. Persisted server-side (not derived client-side) so the midnight
+ * cron job has an authoritative, idempotent record of what is due and what has already posted.
+ */
+model PaymentScheduleEntry {
+  id                   String              @id @default(cuid())
+  fundedDealId         String
+  fundedDeal           FundedDeal          @relation(fields: [fundedDealId], references: [id], onDelete: Cascade)
+  sequence             Int
+  dueDate              DateTime
+  scheduledAmountCents Int
+  status               ScheduleEntryStatus @default(pending)
+  postedAt             DateTime?
+  postedAmountCents    Int?
+  postingSource        String?
+  adjustmentId         String?
+  adjustment           PaymentAdjustment?  @relation(fields: [adjustmentId], references: [id], onDelete: SetNull)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  // Guarantees the cron job (or a retried/duplicate invocation) can never create or post the same
+  // scheduled payment twice.
+  @@unique([fundedDealId, sequence])
+  // Cron sweep query: "find pending entries due on or before now".
+  @@index([status, dueDate])
+}
+
+enum PaymentAdjustmentType {
+  lowered
+  pause
+}
+
+/**
+ * A lowered-payment period or a pause. Historical posted payments are never rewritten by these;
+ * they only affect schedule entries still pending regeneration/posting.
+ */
+model PaymentAdjustment {
+  id              String                 @id @default(cuid())
+  fundedDealId    String
+  fundedDeal      FundedDeal             @relation(fields: [fundedDealId], references: [id], onDelete: Cascade)
+  type            PaymentAdjustmentType
+  newAmountCents  Int?
+  effectiveDate   DateTime
+  endDate         DateTime?
+  reason          String
+  active          Boolean                @default(true)
+  createdByUserId String?
+  createdAt       DateTime               @default(now())
+
+  scheduleEntries PaymentScheduleEntry[]
+
+  @@index([fundedDealId, active])
+}
+
+/**
+ * Append-only history of material deal changes: balance overrides, payment adjustments, and
+ * schedule recasts. Never mutated after creation.
+ */
+model AuditEntry {
+  id             String    @id @default(cuid())
+  fundedDealId   String
+  fundedDeal     FundedDeal @relation(fields: [fundedDealId], references: [id], onDelete: Cascade)
+  category       String
+  previousValue  Json?
+  newValue       Json?
+  effectiveDate  DateTime?
+  reason         String?
+  userId         String?
+  createdAt      DateTime  @default(now())
+
+  @@index([fundedDealId, createdAt])
+}
+
+/**
+ * One row per cron sweep. Lets the poster detect and safely catch up a missed hourly run, and
+ * gives an admin an audit trail of automated posting activity.
+ */
+model CronRunLog {
+  id               String   @id @default(cuid())
+  runAt            DateTime @default(now())
+  windowStart      DateTime
+  windowEnd        DateTime
+  entriesEvaluated Int
+  entriesPosted    Int
+  errorCount       Int      @default(0)
+  errorDetail      String?
+  triggeredBy      String
+
+  @@index([runAt])
 }
 
 model PipelineDeal {
