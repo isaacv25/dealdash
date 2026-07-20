@@ -38,21 +38,29 @@ rows. If a future change needs to alter or drop an existing column, switch to a 
 
 ## Cron configuration
 
-`frontend/vercel.json` declares an hourly cron job:
+This project (`LetsBuildIV`) is on Vercel's **Hobby plan**, which rejects any cron schedule that would
+run more than once per day -- `vercel.json` validation fails the *entire deployment* if it doesn't
+comply (this bit us once already: an hourly schedule silently blocked every deployment attempt with no
+visible error outside the interactive "Create Deployment" dialog). `frontend/vercel.json` therefore
+declares a single daily cron job:
 
 ```json
 {
-  "crons": [{ "path": "/api/cron/post-payments", "schedule": "0 * * * *" }]
+  "crons": [{ "path": "/api/cron/post-payments", "schedule": "10 5 * * *" }]
 }
 ```
 
-Running hourly (rather than pinning one UTC hour meant to represent "midnight Eastern") keeps posting
-correct across the DST transition automatically, and lets a missed run catch up within the hour
-instead of a full day. Vercel's Hobby plan restricts cron jobs to once per day; if this project is on
-Hobby, either upgrade to Pro or change the schedule to a single daily UTC cron (e.g. `"0 9 * * *"` to
-run at roughly 4-5am America/New_York depending on DST) -- the posting logic itself is unaffected
-either way, since "due" is evaluated as "on or before today in America/New_York" rather than "exactly
-now", so a daily cadence still catches every due payment correctly, just with coarser granularity.
+`05:10 UTC` is `00:10 America/New_York` during EST and `01:10` during EDT -- shortly after midnight
+Eastern either way. The posting logic itself doesn't depend on exact timing: "due" is evaluated as "on
+or before today in America/New_York" (see `timezone.ts`), so a single daily run still posts every due
+payment correctly; it just has coarser granularity than an hourly run would. If this project is ever
+upgraded to Pro, an hourly schedule (`"0 * * * *"`) can be restored for tighter granularity and faster
+missed-run recovery.
+
+If a future deployment silently produces no new deployment record at all (build never starts, no error
+surfaces through the normal push/webhook flow), check `vercel.json` against the current plan's limits
+first -- use the dashboard's **Deployments -> "..." -> Create Deployment** dialog, which is the one
+place Vercel actually surfaces this validation error inline.
 
 To verify the cron endpoint manually (e.g. after deploying):
 
