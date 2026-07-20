@@ -102,6 +102,23 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
   const periodicPayment = periodicPaymentFromDeal(deal);
   const totalPeriods = periodsForTerm(deal.termValue, deal.termUnit, deal.paymentFrequency);
 
+  // The cron poster sets scheduleCompletedAt once every persisted schedule entry is posted -- that
+  // is ground truth, not an estimate, and takes priority over everything else so a deal the cron
+  // just finished posting never shows a contradictory "$X remaining" next to a "Paid Out" badge.
+  if (deal.scheduleCompletedAt) {
+    return {
+      grossPayback,
+      periodicPayment,
+      totalPeriods,
+      completedPeriods: totalPeriods,
+      paymentsRemaining: 0,
+      paidAmount: grossPayback,
+      balanceRemaining: 0,
+      progressPercent: 100,
+      usesManualBalance: false,
+    };
+  }
+
   // balanceOverrideAmount (Override Calculated Balance) takes priority over the legacy
   // manualBalanceRemaining field it superseded -- both represent the same "manual override" concept.
   const manualBalance = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining;
