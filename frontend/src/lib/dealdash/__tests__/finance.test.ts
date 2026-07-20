@@ -10,7 +10,7 @@ import {
   normalizeSyndicationPercent,
   syndicationPercentToDisplay,
   MIN_FACTOR_RATE,
-} from "../finance";
+} from "../finance.ts";
 
 test("funded amount change recalculates total payback", () => {
   const result = calculateDeal({

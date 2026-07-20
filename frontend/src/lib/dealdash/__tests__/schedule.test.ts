@@ -9,7 +9,7 @@ import {
   applyLoweredPayment,
   isWeekendUtc,
   type ScheduleEntry,
-} from "../schedule";
+} from "../schedule.ts";
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 

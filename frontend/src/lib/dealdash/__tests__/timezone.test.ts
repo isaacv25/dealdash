@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { easternDateKey, utcDateKey, isDueInEastern } from "../timezone";
+import { easternDateKey, utcDateKey, isDueInEastern } from "../timezone.ts";
 
 test("America/New_York midnight: a UTC instant just after ET midnight resolves to the new ET date", () => {
   // 2026-07-20 04:05 UTC is 2026-07-20 00:05 America/New_York in summer (EDT, UTC-4).
