@@ -1,5 +1,5 @@
 import type { PaymentFrequency } from "./types";
-import { buildEvenScheduleAmountsCents, scheduledPaymentCents } from "./finance";
+import { buildEvenScheduleAmountsCents, scheduledPaymentCents } from "./finance.ts";
 
 /**
  * Pure, framework-agnostic payment-schedule math. Dates are always UTC-midnight instants that
