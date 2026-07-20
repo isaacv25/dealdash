@@ -18,7 +18,7 @@ import {
 } from "@/app/(app)/actions";
 import { useDealdash } from "./state";
 import { DecimalField } from "./inputs";
-import { formatCurrency, formatDate, toDateInput, dateInputToIso } from "@/lib/dealdash/format";
+import { formatCurrency, formatDate, formatCalendarDate, toDateInput, dateInputToIso } from "@/lib/dealdash/format";
 
 type ScheduleRow = Awaited<ReturnType<typeof getDealScheduleAction>>[number];
 type AuditRow = Awaited<ReturnType<typeof getDealAuditHistoryAction>>[number];
@@ -305,7 +305,7 @@ function ScheduleTimeline({ dealId, rows, onLoad }: { dealId: string; rows: Sche
           {rows.map((row) => (
             <tr key={row.id} className="border-t border-[var(--line)]">
               <td className="px-2 py-1.5">{row.sequence}</td>
-              <td className="px-2 py-1.5">{formatDate(row.dueDate.toString())}</td>
+              <td className="px-2 py-1.5">{formatCalendarDate(row.dueDate.toString())}</td>
               <td className="px-2 py-1.5">{formatCurrency((row.postedAmountCents ?? row.scheduledAmountCents) / 100)}</td>
               <td className="px-2 py-1.5">
                 <span className={`pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
@@ -568,7 +568,7 @@ function AuditHistoryList({ rows, onLoad }: { rows: AuditRow[] | null; onLoad: (
           <div className="mt-1 flex flex-wrap gap-x-4 text-[var(--muted)]">
             {entry.previousValue !== null && <span>From: {JSON.stringify(entry.previousValue)}</span>}
             {entry.newValue !== null && <span>To: {JSON.stringify(entry.newValue)}</span>}
-            {entry.effectiveDate && <span>Effective {formatDate(entry.effectiveDate.toString())}</span>}
+            {entry.effectiveDate && <span>Effective {formatCalendarDate(entry.effectiveDate.toString())}</span>}
           </div>
         </li>
       ))}
