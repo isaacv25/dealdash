@@ -190,7 +190,8 @@ export async function applyLoweredPaymentAdjustment(dealId: string, input: Lower
   if (!Number.isFinite(input.newAmount) || input.newAmount < 0) {
     throw new Error("Lowered payment amount must be zero or greater.");
   }
-  if (!input.reason) {
+  const reason = input.reason;
+  if (!reason) {
     throw new Error("A reason is required for a lowered payment adjustment.");
   }
 
@@ -203,7 +204,7 @@ export async function applyLoweredPaymentAdjustment(dealId: string, input: Lower
         newAmountCents: dollarsToCents(input.newAmount),
         effectiveDate: input.effectiveDate,
         endDate: input.endDate,
-        reason: input.reason,
+        reason,
         createdByUserId: input.userId,
       },
     });
@@ -247,7 +248,8 @@ export interface PauseInput extends DealAuditContext {
 }
 
 export async function applyPauseAdjustment(dealId: string, input: PauseInput) {
-  if (!input.reason) {
+  const reason = input.reason;
+  if (!reason) {
     throw new Error("A reason is required for a payment pause.");
   }
 
@@ -259,7 +261,7 @@ export async function applyPauseAdjustment(dealId: string, input: PauseInput) {
         type: "pause",
         effectiveDate: input.pauseStart,
         endDate: input.resumeDate,
-        reason: input.reason,
+        reason,
         createdByUserId: input.userId,
       },
     });
