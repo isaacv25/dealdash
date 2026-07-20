@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm prisma:generate && next dev",
-    "build": "pnpm prisma:generate && pnpm test && next build",
+    "build": "pnpm prisma:generate && pnpm prisma:push && pnpm test && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "node --experimental-strip-types --test src/lib/dealdash/__tests__/*.test.ts",

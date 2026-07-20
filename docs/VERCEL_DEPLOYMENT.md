@@ -22,19 +22,24 @@ The frontend runs Prisma generate during install/build using the schema at
 `frontend/prisma/schema.prisma` -- that is the only schema Vercel and local dev use; the copy under
 `backend/prisma/schema.prisma` is a legacy, unused artifact and is not read by any build step.
 
-Before or immediately after the first production deploy, make sure the database schema exists:
+**The production build runs `prisma db push` automatically** (`frontend/package.json`'s `build`
+script: `prisma:generate && prisma:push && test && next build`), using Vercel's own build-time
+`DATABASE_URL`. This was added after a real incident where a schema change (new `FundedDeal` columns
+for the payment-schedule feature) shipped in a deployment without the database being migrated, and
+every authenticated page load failed with `PrismaClientKnownRequestError: column ... does not exist`
+until the schema was pushed by hand. Folding the push into the build closes that gap for good.
 
-```powershell
-cd frontend
-pnpm prisma:push
-```
+This is safe to run unattended because `prisma db push` refuses to apply a destructive change (a drop
+or a type change that could lose data) in a non-interactive environment unless `--accept-data-loss` is
+explicitly passed -- which this build script does not pass. A destructive schema change will therefore
+fail the build loudly (and leave the database untouched) rather than silently deleting data. All schema
+changes made so far are additive (new nullable columns, new tables), so this has always been a no-op
+safety net in practice, not a blocker.
 
 This project uses `prisma db push` rather than versioned `prisma migrate` migrations (no
-`prisma/migrations` directory is tracked). All schema changes to date -- including the payment
-schedule / adjustment / audit / balance-override tables -- are additive (new nullable columns, new
-tables) so `db push` applies them without any destructive-change prompt and without touching existing
-rows. If a future change needs to alter or drop an existing column, switch to a proper
-`prisma migrate` workflow first so that change can be reviewed before it touches production data.
+`prisma/migrations` directory is tracked). If a future change needs to alter or drop an existing
+column, remove the automatic `prisma:push` build step first and switch to a reviewed
+`prisma migrate` workflow so that change is deliberate, not something that happens on every deploy.
 
 ## Cron configuration
 
