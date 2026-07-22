@@ -13,16 +13,13 @@ import {
   YAxis,
 } from "recharts";
 import {
-  detectImportType,
+  calculateRateScenario,
   grossPaybackFromDeal,
-  normalizeImportedRows,
-  parseCsvText,
-  periodicPaymentFromDeal,
   progressForFundedDeal,
   renewalDateForFundedDeal,
 } from "@/lib/dealdash";
-import type { FollowUpItem, FundedDeal, FundedTag, ImportBatch, PipelineStage } from "@/lib/dealdash";
-import { CalendarClock, Copy, Download, Eye, EyeOff, Plus, Trash2, Upload } from "lucide-react";
+import type { FollowUpItem, FundedDeal, FundedTag, PipelineStage } from "@/lib/dealdash";
+import { CalendarClock, Copy, Download, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useDealdash } from "./state";
 import { formatCurrency, formatDate, dateInputToIso, toDateInput } from "@/lib/dealdash/format";
 import { MAX_SYNDICATION_PERCENT, MIN_SYNDICATION_PERCENT, normalizeSyndicationPercent, termUnitForFrequency } from "@/lib/dealdash/finance";
@@ -63,10 +60,6 @@ function hiddenCurrency(showFinancials: boolean, value?: number) {
 
 function formatNumber(value?: number) {
   return numberFormatter.format(value || 0);
-}
-
-function formatPercent(value?: number) {
-  return `${((value || 0) * 100).toFixed(1)}%`;
 }
 
 function getMonthKey(value?: string) {
@@ -126,8 +119,9 @@ function downloadCsv(filename: string, headers: string[], rows: string[][]) {
 /**
  * Page-level section wrapper. Eyebrow + title are intentionally compact —
  * the heading used to be text-3xl which read as oversized at this density.
+ * Exported so other view files (e.g. import-mapping.tsx) can reuse it for a consistent look.
  */
-function SectionFrame({
+export function SectionFrame({
   eyebrow,
   title,
   copy,
@@ -1440,62 +1434,79 @@ export function FollowUpsView() {
 }
 
 // ─── Rate Calculator ──────────────────────────────────────────────────────────
+// This is a standalone "what-if" tool -- nothing here is persisted. Its output used to be routed
+// through hiddenCurrency()/showFinancials, but that toggle is never wired to a visible control
+// anywhere in the UI, so the numbers were permanently stuck behind "•••••" with no way to reveal
+// them. These are deal-economics numbers the broker needs to see to price a deal, not sensitive
+// data, so this view always renders them plainly via formatCurrency().
+
+const rateScenarioFields: Array<{ key: keyof RateScenarioFormState; label: string; step: string; suffix?: string }> = [
+  { key: "fundedAmount", label: "Funded amount", step: "1000" },
+  { key: "factorRate", label: "Factor rate", step: "0.01" },
+  { key: "fees", label: "Fees", step: "50" },
+  { key: "termValue", label: "Term value", step: "1" },
+  { key: "isoPointsPercent", label: "ISO points (% of funded amount)", step: "0.1", suffix: "%" },
+  { key: "repPointsPercent", label: "Rep points (% of ISO points)", step: "0.1", suffix: "%" },
+  { key: "syndicationPercent", label: "Syndication (% going into deal)", step: "0.1", suffix: "%" },
+  { key: "bonus", label: "Bonus", step: "50" },
+];
+
+type RateScenarioFormState = {
+  fundedAmount: number;
+  factorRate: number;
+  fees: number;
+  termValue: number;
+  termUnit: FundedDeal["termUnit"];
+  isoPointsPercent: number;
+  repPointsPercent: number;
+  syndicationPercent: number;
+  bonus: number;
+};
 
 export function RateCalculatorView() {
-  const { showFinancials } = useDealdash();
-  const [scenario, setScenario] = useState({
+  const [scenario, setScenario] = useState<RateScenarioFormState>({
     fundedAmount: 50000,
     factorRate: 1.38,
+    fees: 995,
     termValue: 24,
-    termUnit: "weeks" as FundedDeal["termUnit"],
-    paymentFrequency: "weekly" as FundedDeal["paymentFrequency"],
-    syndicationPercent: 0.1,
-    pointsPercent: 0.02,
-    commissionPercent: 0.05,
-    clawbackPercent: 0,
+    termUnit: "weeks",
+    isoPointsPercent: 2,
+    repPointsPercent: 50,
+    syndicationPercent: 10,
+    bonus: 0,
   });
 
-  const grossPayback = grossPaybackFromDeal({
-    fundedAmount: scenario.fundedAmount,
-    factorRate: scenario.factorRate,
-  });
-  const periodicPayment = periodicPaymentFromDeal({ ...scenario, paymentAmount: 0 });
-  const syndicationAmount = scenario.fundedAmount * scenario.syndicationPercent;
-  const pointsIncome = scenario.fundedAmount * scenario.pointsPercent;
-  const commissionIncome = scenario.fundedAmount * scenario.commissionPercent;
-  const clawbackReserve = grossPayback * scenario.clawbackPercent;
-  const netBrokerProceeds = commissionIncome + pointsIncome - clawbackReserve;
+  const result = calculateRateScenario(scenario);
 
   return (
     <SectionFrame
       eyebrow="Rate Calculator"
-      title="Mock deals before you pitch or price"
-      copy="Model factor rate, terms, frequency, syndication, points, commission, and clawback together. Everything recalculates live."
+      title="Price a deal before you pitch it"
+      copy="Enter the deal terms and your split. Net funded amount, total payback, payment amount, and rep profit recalculate live and are always visible."
     >
       <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
         <div className="grid gap-4 md:grid-cols-2">
-          {[
-            { key: "fundedAmount", label: "Funded amount", step: "1000" },
-            { key: "factorRate", label: "Factor rate", step: "0.01" },
-            { key: "termValue", label: "Term value", step: "1" },
-            { key: "syndicationPercent", label: "Syndication %", step: "0.01" },
-            { key: "pointsPercent", label: "Points %", step: "0.01" },
-            { key: "commissionPercent", label: "Commission %", step: "0.01" },
-            { key: "clawbackPercent", label: "Clawback %", step: "0.01" },
-          ].map((field) => (
-            <div key={field.key} className="space-y-1.5">
+          {rateScenarioFields.map((f) => (
+            <div key={f.key} className="space-y-1.5">
               <label className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                {field.label}
+                {f.label}
               </label>
-              <input
-                className="field"
-                step={field.step}
-                type="number"
-                value={scenario[field.key as keyof typeof scenario] as number}
-                onChange={(e) =>
-                  setScenario((cur) => ({ ...cur, [field.key]: Number(e.target.value) || 0 }))
-                }
-              />
+              <div className="relative">
+                <input
+                  className={`field w-full ${f.suffix ? "pr-7" : ""}`}
+                  step={f.step}
+                  type="number"
+                  value={scenario[f.key]}
+                  onChange={(e) =>
+                    setScenario((cur) => ({ ...cur, [f.key]: Number(e.target.value) || 0 }))
+                  }
+                />
+                {f.suffix && (
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--muted)]">
+                    {f.suffix}
+                  </span>
+                )}
+              </div>
             </div>
           ))}
           <div className="space-y-1.5">
@@ -1517,166 +1528,33 @@ export function RateCalculatorView() {
               <option value="months">Months</option>
             </select>
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Payment frequency
-            </label>
-            <select
-              className="field"
-              value={scenario.paymentFrequency}
-              onChange={(e) =>
-                setScenario((cur) => ({
-                  ...cur,
-                  paymentFrequency: e.target.value as FundedDeal["paymentFrequency"],
-                }))
-              }
-            >
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </div>
         </div>
 
         <div className="rounded-[1.7rem] bg-[linear-gradient(160deg,_rgba(21,94,239,0.14),_rgba(13,148,136,0.12))] p-5">
           <h3 className="text-base font-semibold">Scenario output</h3>
           <div className="mt-4 grid gap-3">
             <MetricCard
-              label="Gross payback"
-              value={hiddenCurrency(showFinancials, grossPayback)}
+              label="Net funded amount"
+              value={formatCurrency(result.netFundedAmount)}
+              detail="Funded amount − fees"
+            />
+            <MetricCard
+              label="Total payback"
+              value={formatCurrency(result.totalPayback)}
               detail="Funded amount × factor rate"
             />
             <MetricCard
-              label="Periodic payment"
-              value={hiddenCurrency(showFinancials, periodicPayment)}
-              detail={`${scenario.paymentFrequency} payment estimate`}
+              label="Payment amount"
+              value={formatCurrency(result.paymentAmount)}
+              detail={`Over ${scenario.termValue || 0} ${scenario.termUnit}`}
             />
             <MetricCard
-              label="Syndication out"
-              value={hiddenCurrency(showFinancials, syndicationAmount)}
-              detail={formatPercent(scenario.syndicationPercent)}
-            />
-            <MetricCard
-              label="Net broker proceeds"
-              value={hiddenCurrency(showFinancials, netBrokerProceeds)}
-              detail={showFinancials ? `Commission ${formatCurrency(commissionIncome)} + points ${formatCurrency(pointsIncome)}` : "Commission and points hidden"}
+              label="Rep profit"
+              value={formatCurrency(result.repProfit)}
+              detail={`Rep pts ${formatCurrency(result.repPointsAmount)} + syndication ${formatCurrency(result.syndicationProfitAmount)} + bonus ${formatCurrency(scenario.bonus)}`}
             />
           </div>
         </div>
-      </div>
-    </SectionFrame>
-  );
-}
-
-// ─── Imports ──────────────────────────────────────────────────────────────────
-
-type ImportPreview = {
-  filename: string;
-  detectedType: "funded" | "pipeline" | "follow-up" | "unknown";
-  headers: string[];
-  rows: Record<string, string>[];
-};
-
-export function ImportsView() {
-  const { importData } = useDealdash();
-  const [previews, setPreviews] = useState<ImportPreview[]>([]);
-
-  async function handleFiles(fileList: FileList | null) {
-    if (!fileList) return;
-    const nextPreviews = await Promise.all(
-      Array.from(fileList).map(async (file) => {
-        const content = await file.text();
-        const parsed = parseCsvText(content);
-        return {
-          filename: file.name,
-          detectedType: detectImportType(parsed.headers),
-          headers: parsed.headers,
-          rows: parsed.rows,
-        } satisfies ImportPreview;
-      }),
-    );
-    setPreviews(nextPreviews);
-  }
-
-  function importPreview(preview: ImportPreview) {
-    if (preview.detectedType === "unknown") return;
-    const normalized = normalizeImportedRows(preview.detectedType, preview.rows, preview.filename);
-    const batch: ImportBatch = {
-      id: `batch-${preview.filename}-${preview.rows.length}-${preview.headers.length}`,
-      filename: preview.filename,
-      importType: preview.detectedType,
-      rowsImported: preview.rows.length,
-      rowsSkipped: 0,
-      detectedColumns: preview.headers,
-      importedAt: preview.rows[0]?.Date || preview.rows[0]?.["Date App"] || "uploaded-in-browser",
-    };
-    importData({ ...normalized, batch });
-  }
-
-  return (
-    <SectionFrame
-      eyebrow="Imports"
-      title="Bring in CSVs from your old workflow"
-      copy="Upload one or more CSV exports, preview their detected shape, and merge them into the workspace. Headers are auto-detected."
-      actions={
-        <label className="primary-button inline-flex cursor-pointer items-center gap-2 text-sm">
-          <Upload className="h-4 w-4" />
-          Upload CSVs
-          <input
-            className="hidden"
-            multiple
-            accept=".csv,.tsv"
-            onChange={(e) => void handleFiles(e.target.files)}
-            type="file"
-          />
-        </label>
-      }
-    >
-      <div className="grid gap-4 xl:grid-cols-2">
-        {previews.length === 0 ? (
-          <div className="rounded-[1.6rem] border border-dashed border-[var(--line)] bg-white/66 p-10 text-center text-sm text-[var(--muted)] xl:col-span-2">
-            No files loaded yet. Upload the monthly deal sheets, funded-deal sheet, or follow-up
-            export to preview them here.
-          </div>
-        ) : (
-          previews.map((preview) => (
-            <div key={preview.filename} className="rounded-[1.6rem] bg-white/76 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-base font-semibold">{preview.filename}</h3>
-                  <p className="mt-0.5 text-sm text-[var(--muted)]">
-                    {preview.rows.length} rows detected
-                  </p>
-                </div>
-                <span className="pill bg-[var(--accent-soft)] text-[var(--accent-strong)]">
-                  {preview.detectedType}
-                </span>
-              </div>
-              <div className="mt-4 rounded-[1.2rem] border border-[var(--line)] bg-white/80 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-                  Detected columns
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {preview.headers.map((h) => (
-                    <span key={h} className="pill bg-white text-[var(--foreground)]">
-                      {h}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="mt-4 flex gap-3">
-                <button
-                  className="ghost-button text-sm"
-                  disabled={preview.detectedType === "unknown"}
-                  onClick={() => importPreview(preview)}
-                  type="button"
-                >
-                  Import into workspace
-                </button>
-              </div>
-            </div>
-          ))
-        )}
       </div>
     </SectionFrame>
   );

@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parseCsvText } from "./csv";
+import { applyColumnMapping, guessColumnMapping, IMPORT_FIELD_DEFS, type ImportDestination } from "./import-fields";
 import {
   createId,
   detectImportType,
@@ -10,6 +11,19 @@ import {
   normalizeFundedRow,
 } from "./normalization";
 import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset } from "./types";
+
+/**
+ * The normalize*Row functions read canonical field keys (see import-fields.ts), but every literal
+ * row below -- and every file under data/imports/ -- is still shaped like the original broker
+ * export sheets (e.g. "Business Name", "Date App"). Rather than hand-rewrite ~150 hardcoded rows
+ * (and risk mistyping a real deal's numbers along the way), re-guess the same column mapping the
+ * live CSV import UI would produce and apply it here too. One mechanism, no duplicated data.
+ */
+function toCanonicalRows(rows: Record<string, string>[], destination: ImportDestination) {
+  if (rows.length === 0) return [];
+  const mapping = guessColumnMapping(Object.keys(rows[0]), IMPORT_FIELD_DEFS[destination]);
+  return applyColumnMapping(mapping, rows);
+}
 
 // ─── CSV file loader (local dev only) ────────────────────────────────────────
 
@@ -49,17 +63,17 @@ export async function loadSeedDataset(): Promise<SeedDataset> {
     const src = file.filename;
 
     if (headerSet.has("Amount") && headerSet.has("Funder")) {
-      file.rows.forEach((row, i) => fundedDeals.push(normalizeFundedRow(row, src, i)));
+      toCanonicalRows(file.rows, "funded").forEach((row, i) => fundedDeals.push(normalizeFundedRow(row, src, i)));
       importBatches.push({ id: createId("import", src, 0), filename: src, importType: "funded", rowsImported: file.rows.length, rowsSkipped: 0, detectedColumns: file.headers, importedAt: new Date().toISOString() });
       continue;
     }
     if (headerSet.has("Date App") && headerSet.has("Business")) {
-      file.rows.forEach((row, i) => pipelineDeals.push(normalizePipelineRow(row, src, i)));
+      toCanonicalRows(file.rows, "pipeline").forEach((row, i) => pipelineDeals.push(normalizePipelineRow(row, src, i)));
       importBatches.push({ id: createId("import", src, 0), filename: src, importType: "pipeline", rowsImported: file.rows.length, rowsSkipped: 0, detectedColumns: file.headers, importedAt: new Date().toISOString() });
       continue;
     }
     if (headerSet.has("Full name") && headerSet.has("Date Last Contacted")) {
-      file.rows.forEach((row, i) => followUps.push(normalizeFollowUpRow(row, src, i)));
+      toCanonicalRows(file.rows, "follow-up").forEach((row, i) => followUps.push(normalizeFollowUpRow(row, src, i)));
       importBatches.push({ id: createId("import", src, 0), filename: src, importType: "follow-up", rowsImported: file.rows.length, rowsSkipped: 0, detectedColumns: file.headers, importedAt: new Date().toISOString() });
     }
   }
@@ -86,7 +100,7 @@ export function createRealDataset(): SeedDataset {
    * Keep the Vercel-safe funded fallback in CSV-shaped rows so normalization
    * stays identical to the uploaded source sheet, including source spelling.
    */
-  const fundedDeals: FundedDeal[] = [
+  const fundedDealsRaw: Record<string, string>[] = [
     { Date: "12/30/2025", "Business Name": "Synchronized Strategies LLC", Name: "Anil Mahase", Number: "(908) 415-0665", Email: "mahaseanil@gmail.com", Amount: "$60,000.00", Rate: "1.5", Term: "45", "Term Unit": "Days", Payment: "$2,000.00", Funder: "Limitless Advance", Syndication: "0%", Commission: "$2,160.00", Status: "Slow payments" },
     { Date: "2/5/2026", "Business Name": "H&R Home Health Care", Name: "Tiffany Hogan", Number: "(317) 992-3236", Email: "tiffanyhogan87@gmail.com", Amount: "$30,000.00", Rate: "1.49", Term: "50", "Term Unit": "Days", Payment: "$894.00", Funder: "Kapfi", Syndication: "0%", Commission: "$900.00", Status: "Paid out" },
     { Date: "2/6/2026", "Business Name": "H&R Home Health Care", Name: "Tiffany Hogan", Number: "(317) 992-3236", Email: "tiffanyhogan87@gmail.com", Amount: "$20,000.00", Rate: "1.49", Term: "50", "Term Unit": "Days", Payment: "$596.00", Funder: "Avanza", Syndication: "0%", Commission: "$720.00", Status: "Paid Out" },
@@ -111,7 +125,8 @@ export function createRealDataset(): SeedDataset {
     { Date: "6/11/2026", "Business Name": "Sato Solution", Name: "Sandro Toledo", Number: "(978) 596-7033", Email: "sato.solution23@gmail.com", Amount: "$20,000.00", Rate: "1.5", Term: "14", "Term Unit": "Weeks", Payment: "$2,142.86", Funder: "Limitless Advance", Syndication: "5%", Commission: "$1,220.00", Status: "" },
     { Date: "6/17/2026", "Business Name": "Engage Labs LLC", Name: "Lynn Wills", Number: "(845) 321-1928", Email: "lwills@engagelabsllc.com", Amount: "$40,000.00", Rate: "1.45", Term: "40", "Term Unit": "Daily", Payment: "$1,450.00", Funder: "Limitless Advance", Syndication: "5%", Commission: "$2,100.00", Status: "" },
     { Date: "6/17/2026", "Business Name": "Rescue MD PLLC", Name: "Tochi Okoro", Number: "(313) 649-1867", Email: "tochiokoro@myrescuemd.com", Amount: "$25,000.00", Rate: "1.3", Term: "20", "Term Unit": "Weeks", Payment: "$1,625.00", Funder: "ENOD via Yashard", Syndication: "0%", Commission: "$750.00", Status: "" },
-  ].map((row, index) => normalizeFundedRow(row, "seed", index));
+  ];
+  const fundedDeals: FundedDeal[] = toCanonicalRows(fundedDealsRaw, "funded").map((row, index) => normalizeFundedRow(row, "seed", index));
 
   // ── Pipeline deals — 2025 (Ethan's Deals - 2025.csv) ────────────────────
   const pipeline2025: PipelineDeal[] = [
@@ -339,7 +354,11 @@ export function createRealDataset(): SeedDataset {
   // ── Follow-Ups / Contacts (Contacted Leads - Sheet1.csv) ─────────────────
   let _fIdx = 0;
   const fu = (n: string, ph: string, em: string, b: string, r: string, nt: string, mo: string, pos: string, app: string, lc: string, sh: string): FollowUpItem =>
-    normalizeFollowUpRow({ "Full name": n, Number: ph, Email: em, "Business Name": b, Request: r, Notes: nt, Monthly: mo, Positions: pos, App: app, "Date Last Contacted": lc, Sheet: sh }, "seed", _fIdx++);
+    normalizeFollowUpRow(
+      toCanonicalRows([{ "Full name": n, Number: ph, Email: em, "Business Name": b, Request: r, Notes: nt, Monthly: mo, Positions: pos, App: app, "Date Last Contacted": lc, Sheet: sh }], "follow-up")[0],
+      "seed",
+      _fIdx++,
+    );
 
   const followUps: FollowUpItem[] = [
     fu("Gilbert Reynosa","(210) 336-4507","reynosa.refrigeration@gmail.com","","50k","Texas","","","FALSE","Ent 1/13/26","6/23"),
@@ -464,9 +483,9 @@ function pp(
   phone: string, email: string, request: string, status: string,
   notes: string, sheet: string,
 ): PipelineDeal {
-  return normalizePipelineRow(
-    { "Date App": dateApp, Name: name, Business: business, "City, State": cityState, Number: phone, Email: email, Request: request, Status: status, Notes: notes, Sheet: sheet },
-    "seed",
-    _pIdx++,
-  );
+  const canonicalRow = toCanonicalRows(
+    [{ "Date App": dateApp, Name: name, Business: business, "City, State": cityState, Number: phone, Email: email, Request: request, Status: status, Notes: notes, Sheet: sheet }],
+    "pipeline",
+  )[0];
+  return normalizePipelineRow(canonicalRow, "seed", _pIdx++);
 }
