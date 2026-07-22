@@ -1,4 +1,4 @@
-import { centsToDollars, dollarsToCents, scheduledPaymentCents, totalPaybackCents } from "./finance";
+import { centsToDollars, dollarsToCents, scheduledPaymentCents, totalPaybackCents } from "./finance.ts";
 import type { TermUnit } from "./types";
 
 /**
