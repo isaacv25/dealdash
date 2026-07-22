@@ -1180,12 +1180,22 @@ export function PipelineView() {
                         </button>
                       </div>
 
-                      {/* Phone + email */}
-                      {(deal.phone || deal.email) && (
-                        <p className="mt-1 text-xs text-[var(--muted)] truncate">
-                          {deal.phone}{deal.phone && deal.email ? " · " : ""}{deal.email}
-                        </p>
-                      )}
+                      {/* Phone + email -- editable, not just a display label */}
+                      <div className="mt-2 grid gap-2 grid-cols-2">
+                        <input
+                          className="field text-sm"
+                          value={deal.phone || ""}
+                          onChange={(e) => updatePipelineDeal(deal.id, { phone: e.target.value })}
+                          placeholder="Phone"
+                        />
+                        <input
+                          className="field text-sm"
+                          value={deal.email || ""}
+                          onChange={(e) => updatePipelineDeal(deal.id, { email: e.target.value })}
+                          placeholder="Email"
+                          type="email"
+                        />
+                      </div>
 
                       <div className="mt-2 grid gap-2 grid-cols-2">
                         <input
