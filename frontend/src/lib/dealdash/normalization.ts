@@ -1,50 +1,12 @@
-import { z } from "zod";
 import { parseBoolean, parseCurrency, parseDate, parsePercent, parseRequestRange } from "./calculations";
 import type { FollowUpItem, FundedDeal, PipelineDeal, PipelineStage } from "./types";
 
-const pipelineSchema = z.object({
-  "Date App": z.string().optional().default(""),
-  Name: z.string().optional().default(""),
-  Business: z.string().optional().default(""),
-  "City, State": z.string().optional().default(""),
-  Number: z.string().optional().default(""),
-  Email: z.string().optional().default(""),
-  Request: z.string().optional().default(""),
-  Status: z.string().optional().default(""),
-  Notes: z.string().optional().default(""),
-  Sheet: z.string().optional().default(""),
-});
+/** Rows arriving here are already re-keyed to canonical field names by applyColumnMapping. */
+type CanonicalRow = Record<string, string>;
 
-const fundedSchema = z.object({
-  Date: z.string().optional().default(""),
-  "Business Name": z.string().optional().default(""),
-  Name: z.string().optional().default(""),
-  Number: z.string().optional().default(""),
-  Email: z.string().optional().default(""),
-  Amount: z.string().optional().default(""),
-  Rate: z.string().optional().default(""),
-  Term: z.string().optional().default(""),
-  "Term Unit": z.string().optional().default(""),
-  Payment: z.string().optional().default(""),
-  Funder: z.string().optional().default(""),
-  Syndication: z.string().optional().default(""),
-  Commission: z.string().optional().default(""),
-  Status: z.string().optional().default(""),
-});
-
-const followUpSchema = z.object({
-  "Full name": z.string().optional().default(""),
-  Number: z.string().optional().default(""),
-  Email: z.string().optional().default(""),
-  "Business Name": z.string().optional().default(""),
-  Request: z.string().optional().default(""),
-  Notes: z.string().optional().default(""),
-  Monthly: z.string().optional().default(""),
-  Positions: z.string().optional().default(""),
-  App: z.string().optional().default(""),
-  "Date Last Contacted": z.string().optional().default(""),
-  Sheet: z.string().optional().default(""),
-});
+function field(row: CanonicalRow, key: string) {
+  return row[key] ?? "";
+}
 
 export function createId(prefix: string, source: string, index: number) {
   const slug = source
@@ -96,94 +58,104 @@ function splitCityState(value: string) {
 /**
  * CSV normalization deliberately preserves the sheet's raw labels while also mapping them into
  * canonical app stages. That gives us reliable filters without losing the wording the broker saw.
+ *
+ * `row` here is already re-keyed to canonical field names (see import-fields.ts / applyColumnMapping)
+ * -- these functions no longer assume any specific literal CSV header names.
  */
-export function normalizeFundedRow(row: Record<string, string>, sourceLabel: string, index: number): FundedDeal {
-  const parsed = fundedSchema.parse(row);
-  const termUnitRaw = parsed["Term Unit"].trim().toLowerCase();
+export function normalizeFundedRow(row: CanonicalRow, sourceLabel: string, index: number): FundedDeal {
+  const businessName = field(row, "businessName");
+  const contactName = field(row, "contactName");
+  const termUnitRaw = field(row, "termUnit").trim().toLowerCase();
   const termUnit = termUnitRaw.startsWith("day") ? "days" : termUnitRaw.startsWith("month") ? "months" : "weeks";
   const paymentFrequency = termUnit === "days" ? "daily" : termUnit === "months" ? "monthly" : "weekly";
-  const fundedAmount = parseCurrency(parsed.Amount);
-  const factorRate = Number.parseFloat(parsed.Rate || "0") || 1;
-  const commissionAmount = parseCurrency(parsed.Commission);
+  const fundedAmount = parseCurrency(field(row, "fundedAmount"));
+  const factorRate = Number.parseFloat(field(row, "factorRate") || "0") || 1;
+  const commissionAmount = parseCurrency(field(row, "commissionAmount"));
   const commissionPercent = fundedAmount > 0 && commissionAmount > 0 ? commissionAmount / fundedAmount : 0;
-  const statusStage = fundedStageFromRawStatus(parsed.Status);
-  const commissionStatus = commissionStatusFromRawStatus(parsed.Status);
+  const statusRaw = field(row, "statusRaw");
+  const statusStage = fundedStageFromRawStatus(statusRaw);
+  const commissionStatus = commissionStatusFromRawStatus(statusRaw);
 
   return {
-    id: createId("funded", parsed["Business Name"] || parsed.Name || sourceLabel, index),
-    businessName: parsed["Business Name"] || "Unknown business",
-    contactName: parsed.Name || "Unknown contact",
-    phone: parsed.Number || undefined,
-    email: parsed.Email || undefined,
-    fundedDate: parseDate(parsed.Date),
-    funder: parsed.Funder || undefined,
+    id: createId("funded", businessName || contactName || sourceLabel, index),
+    businessName: businessName || "Unknown business",
+    contactName: contactName || "Unknown contact",
+    phone: field(row, "phone") || undefined,
+    email: field(row, "email") || undefined,
+    fundedDate: parseDate(field(row, "fundedDate")),
+    funder: field(row, "funder") || undefined,
     fundedAmount,
     factorRate,
-    termValue: Number.parseInt(parsed.Term || "0", 10) || 0,
+    termValue: Number.parseInt(field(row, "termValue") || "0", 10) || 0,
     termUnit,
-    paymentAmount: parseCurrency(parsed.Payment),
+    paymentAmount: parseCurrency(field(row, "paymentAmount")),
     paymentFrequency,
-    syndicationPercent: parsePercent(parsed.Syndication),
+    syndicationPercent: parsePercent(field(row, "syndicationPercent")),
     pointsPercent: 0,
     housePointsPercent: 0,
     commissionPercent,
     commissionAmount,
     commissionStatus,
     clawbackAmount: commissionStatus === "clawback" ? Math.abs(commissionAmount) : 0,
-    statusRaw: parsed.Status || "Active",
+    statusRaw: statusRaw || "Active",
     statusStage,
     fundedTags: [],
-    notes: "",
+    notes: field(row, "notes"),
     sourceLabel,
   };
 }
 
-export function normalizePipelineRow(row: Record<string, string>, sourceLabel: string, index: number): PipelineDeal {
-  const parsed = pipelineSchema.parse(row);
-  const { city, state } = splitCityState(parsed["City, State"]);
-  const request = parseRequestRange(parsed.Request);
+export function normalizePipelineRow(row: CanonicalRow, sourceLabel: string, index: number): PipelineDeal {
+  const contactName = field(row, "contactName");
+  const businessName = field(row, "businessName");
+  const { city, state } = splitCityState(field(row, "cityState"));
+  const requestLabel = field(row, "requestLabel");
+  const request = parseRequestRange(requestLabel);
+  const statusRaw = field(row, "statusRaw");
   return {
-    id: createId("pipeline", parsed.Business || parsed.Name || sourceLabel, index),
-    contactName: parsed.Name || "Unknown contact",
-    businessName: parsed.Business || "Unknown business",
-    phone: parsed.Number || undefined,
-    email: parsed.Email || undefined,
+    id: createId("pipeline", businessName || contactName || sourceLabel, index),
+    contactName: contactName || "Unknown contact",
+    businessName: businessName || "Unknown business",
+    phone: field(row, "phone") || undefined,
+    email: field(row, "email") || undefined,
     city,
     state,
-    submittedDate: parseDate(parsed["Date App"]),
-    requestLabel: parsed.Request || "",
+    submittedDate: parseDate(field(row, "submittedDate")),
+    requestLabel,
     requestedAmountMin: request.requestedAmountMin,
     requestedAmountMax: request.requestedAmountMax,
-    statusRaw: parsed.Status || "",
-    stage: stageFromRawStatus(parsed.Status),
-    notes: parsed.Notes || "",
-    sheetLabel: parsed.Sheet || "",
+    statusRaw,
+    stage: stageFromRawStatus(statusRaw),
+    notes: field(row, "notes"),
+    sheetLabel: field(row, "sheetLabel"),
     nextFollowUpDate: undefined,
     sourceLabel,
   };
 }
 
-export function normalizeFollowUpRow(row: Record<string, string>, sourceLabel: string, index: number): FollowUpItem {
-  const parsed = followUpSchema.parse(row);
-  const businessName = parsed["Business Name"] || `${parsed["Full name"]} lead`.trim();
+export function normalizeFollowUpRow(row: CanonicalRow, sourceLabel: string, index: number): FollowUpItem {
+  const contactName = field(row, "contactName");
+  const businessName = field(row, "businessName") || `${contactName} lead`.trim();
+  const appSubmittedRaw = field(row, "appSubmitted");
   return {
-    id: createId("follow-up", businessName || parsed["Full name"] || sourceLabel, index),
-    contactName: parsed["Full name"] || "Unknown contact",
+    id: createId("follow-up", businessName || contactName || sourceLabel, index),
+    contactName: contactName || "Unknown contact",
     businessName: businessName || "Unknown business",
-    phone: parsed.Number || undefined,
-    email: parsed.Email || undefined,
-    requestLabel: parsed.Request || "",
-    notes: [parsed.Notes, parsed.Monthly, parsed.Positions].filter(Boolean).join(" | "),
-    lastContactLabel: parsed["Date Last Contacted"] || "",
+    phone: field(row, "phone") || undefined,
+    email: field(row, "email") || undefined,
+    requestLabel: field(row, "requestLabel"),
+    notes: [field(row, "notes"), field(row, "monthlyRevenueLabel"), field(row, "positionsLabel")].filter(Boolean).join(" | "),
+    lastContactLabel: field(row, "lastContactLabel"),
     dueDate: undefined,
-    priority: parseBoolean(parsed.App) ? "medium" : "high",
-    appSubmitted: parseBoolean(parsed.App),
+    priority: parseBoolean(appSubmittedRaw) ? "medium" : "high",
+    appSubmitted: parseBoolean(appSubmittedRaw),
     completed: false,
-    sheetLabel: parsed.Sheet || "",
+    sheetLabel: field(row, "sheetLabel"),
     sourceLabel,
   };
 }
 
+/** Best-guess default destination for a freshly-uploaded file, based on its raw (unmapped) headers. */
 export function detectImportType(headers: string[]) {
   const headerSet = new Set(headers);
 
@@ -193,9 +165,10 @@ export function detectImportType(headers: string[]) {
   return "unknown" as const;
 }
 
+/** rows must already be canonical-keyed (post applyColumnMapping) before calling this. */
 export function normalizeImportedRows(
   importType: "funded" | "pipeline" | "follow-up",
-  rows: Record<string, string>[],
+  rows: CanonicalRow[],
   sourceLabel: string,
 ) {
   if (importType === "funded") {
