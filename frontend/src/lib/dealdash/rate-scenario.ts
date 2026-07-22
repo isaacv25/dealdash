@@ -45,14 +45,14 @@ export function calculateRateScenario(input: RateScenarioInput): RateScenarioRes
   const feesCents = dollarsToCents(Math.max(0, input.fees || 0));
   const netFundedAmountCents = Math.max(0, fundedAmountCents - feesCents);
 
-  const paybackCents = totalPaybackCents(fundedAmountCents, input.factorRate || 0);
+  const paybackCents = totalPaybackCents(fundedAmountCents, Math.max(0, input.factorRate || 0));
   const periods = Math.max(0, Math.trunc(input.termValue || 0));
   const paymentCents = scheduledPaymentCents(paybackCents, periods);
 
   const isoPointsCents = Math.round((fundedAmountCents * Math.max(0, input.isoPointsPercent || 0)) / 100);
   const repPointsCents = Math.round((isoPointsCents * Math.max(0, input.repPointsPercent || 0)) / 100);
   const syndicationProfitCents = Math.round((fundedAmountCents * Math.max(0, input.syndicationPercent || 0)) / 100);
-  const bonusCents = dollarsToCents(input.bonus || 0);
+  const bonusCents = dollarsToCents(Math.max(0, input.bonus || 0));
   const repProfitCents = repPointsCents + syndicationProfitCents + bonusCents;
 
   return {
