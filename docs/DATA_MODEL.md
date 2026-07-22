@@ -207,6 +207,36 @@ Current commission statuses:
 
 Sensitive financial visibility is stored on the user record as the account-level default. Dashboard KPI cards now also keep independent show/hide booleans in browser `localStorage`; those booleans do not contain financial values.
 
+The standalone Rate Calculator (`/rate-calculator`) does **not** use this preference. It previously
+routed its output through the same `showFinancials` toggle as the dashboard, but that toggle was
+never wired to any visible control on that page, so the numbers were permanently hidden with no way
+to reveal them. Rate Calculator output is deal-pricing math the broker needs to see, not sensitive
+data pulled from persisted records, so it now always renders plainly.
+
+## Rate Calculator scenario math (`frontend/src/lib/dealdash/rate-scenario.ts`)
+
+A standalone, non-persisted "what-if" tool -- nothing here touches `FundedDeal` or the database. Like
+`finance.ts`, all math runs in integer cents to stay exact.
+
+Inputs: funded amount, factor rate, fees ($, flat), term value, term unit (label only), ISO points
+(%, of funded amount), rep points (%, of the ISO points *dollar* amount -- not of funded amount),
+syndication (%, of funded amount), bonus ($, flat).
+
+```text
+Net Funded Amount   = Funded Amount - Fees
+Total Payback        = Funded Amount x Factor Rate
+Payment Amount        = Total Payback / Term Value          (one payment per termUnit period; there
+                                                               is no separate payment-frequency input)
+ISO Points $          = Funded Amount x ISO Points %
+Rep Points $          = ISO Points $ x Rep Points %
+Syndication Profit $ = Funded Amount x Syndication %
+Rep Profit            = Rep Points $ + Syndication Profit $ + Bonus
+```
+
+Rep Profit is intentionally a simplified, directionally-useful number: it does not model syndicator
+management fees, which vary per syndicator relationship. All inputs are floored at 0 before use, so
+a negative or blank field behaves like 0 rather than producing a negative output.
+
 ## Settings updates
 
 The Settings page updates profile and company fields through server actions. Username updates check the global unique username constraint before saving. Password updates require the current password and hash the replacement with the same `scrypt` helper used during signup.

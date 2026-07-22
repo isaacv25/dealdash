@@ -19,14 +19,15 @@ export default function DocsPage() {
         <p className="mt-3">Commission payout status is now tracked separately from deal performance status. That lets a file stay active while the commission itself is still pending, already paid out, or in clawback.</p>
       </DocSection>
       <DocSection title="Hidden financials">
-        <p>Financial values start hidden for every newly created user. Use the sidebar toggle to reveal or hide money fields. That preference is stored on the user record so it follows the person rather than the browser.</p>
+        <p>Dashboard KPI cards each have their own eye/eye-off toggle to reveal or hide that specific number. The Rate Calculator is the one exception: its output is always visible, since it&apos;s deal-pricing math you need to see, not sensitive data pulled from your records.</p>
       </DocSection>
       <DocSection title="CSV imports and manual entry">
-        <p>CSVs are still parsed in the browser for preview speed, but importing now hands the normalized rows to a server action. The server scopes each imported row to the company and upserts by a stable row key so re-importing the same source file updates instead of duplicating.</p>
+        <p>Upload a CSV, then pick where it goes: Funded Progress, Pipeline, or Follow-Ups. A mapping table lets you match your file&apos;s columns to DealDash&apos;s fields -- likely matches are pre-filled, but every field is a dropdown you can change, so your sheet never has to match a fixed header format.</p>
+        <p className="mt-3">Once you confirm the mapping, the normalized rows are handed to a server action. The server scopes each imported row to the company and upserts by a stable row key so re-importing the same source file updates instead of duplicating.</p>
         <p className="mt-3">Manual add/edit/delete actions also persist immediately to the database through server actions. No more device-specific local snapshots.</p>
       </DocSection>
       <DocSection title="Rate calculator assumptions">
-        <p>The calculator models gross payback from funded amount times factor rate. If the payment amount is blank it derives one from term length and cadence. Monthly and daily approximations still use rounded business-friendly conversions, so treat APR-style output as a mockup rather than regulated disclosure math.</p>
+        <p>Enter funded amount, factor rate, fees, term, ISO points %, rep points %, syndication %, and a bonus. Net funded amount is funded amount minus fees; total payback is funded amount times factor rate; payment amount splits total payback evenly across the term (one payment per term-unit period -- there&apos;s no separate frequency control). Rep profit adds your cut of the ISO points, your cut of the syndicated portion, and the bonus -- it intentionally does not model syndicator management fees, so treat it as a directional number, not a fully-loaded one.</p>
       </DocSection>
       <DocSection title="Deployment requirements">
         <p>Production now requires a Postgres DATABASE_URL plus a SESSION_SECRET. Before the app can be used on a fresh environment, run Prisma against that database so the account and deal tables exist.</p>

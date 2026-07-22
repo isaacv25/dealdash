@@ -24,8 +24,8 @@ DealDash is a production-shaped MCA operating system that now combines:
 - Funded progress tracking with manual balance overrides and commission payout status
 - Pipeline board with editable statuses and dates
 - Follow-up sheet with completion and submission tracking
-- Rate calculator for factor rate, payment rhythm, syndication, points, commission, and clawback modeling
-- CSV upload preview plus server-persisted import merges
+- Rate calculator for funded amount, factor rate, fees, term, ISO points, rep points, syndication, and bonus -- output (net funded amount, total payback, payment amount, rep profit) is always visible
+- CSV upload with a destination picker (Funded Progress / Pipeline / Follow-Ups) and a column-mapping step, so any CSV shape can be imported, plus server-persisted import merges
 - Dashboard KPI values with individual show/hide controls
 - Admin-only user count/list view for Ethan's admin account
 - Settings page for name, username, company name, and password updates

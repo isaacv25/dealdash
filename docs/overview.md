@@ -91,7 +91,19 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
 - `hideFinancialsByDefault` is stored on the `User` row.
 - Dashboard KPI cards now have independent eye/eye-off visibility controls.
 - Only dashboard visibility booleans are stored in `localStorage`; financial values are not stored there.
-- Other finance-heavy screens can still use the user preference as a default masking signal.
+- The Rate Calculator (`/rate-calculator`) is the one exception: its output is always visible and
+  does not consult this preference at all (see `docs/DATA_MODEL.md`'s "Hidden financials preference"
+  section for why).
+
+## Rate Calculator
+
+- Standalone, non-persisted scenario tool at `/rate-calculator`; math lives in
+  `frontend/src/lib/dealdash/rate-scenario.ts` (`calculateRateScenario`), covered by
+  `frontend/src/lib/dealdash/__tests__/rate-scenario.test.ts`.
+- Inputs: funded amount, factor rate, fees, term value/unit, ISO points %, rep points %,
+  syndication %, bonus. Outputs: net funded amount, total payback, payment amount, rep profit.
+- See `docs/DATA_MODEL.md` for the exact formulas and the intentional simplifications (no
+  syndicator management fees modeled, payments assumed once per term-unit period).
 
 ## Month and date filtering
 
@@ -106,6 +118,11 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
 ## CSV import and manual entry workflow
 
 - Browser parsing keeps previews fast and avoids uploading raw files before the user confirms.
+- Import destination (Funded Progress / Pipeline / Follow-Ups) is an explicit user choice per file,
+  not an auto-detect gate -- `detectImportType` only supplies a starting guess.
+- A column-mapping step (`frontend/src/lib/dealdash/import-fields.ts`) lets the user map arbitrary
+  CSV headers to the app's canonical fields, with alias-based auto-guessing and manual override per
+  field. See `docs/CSV_IMPORT_GUIDE.md` for the full field list per destination.
 - The server scopes imported IDs to the company so the same sheet can be safely re-imported.
 - Manual add/edit/delete calls are persisted through server actions, not local storage.
 - Delete buttons soft-delete records into Trash rather than immediately removing them from Postgres.
@@ -131,6 +148,8 @@ verification instead, per `docs/VERCEL_DEPLOYMENT.md`.
 Future Codex or developer sessions should start with these files first:
 
 - `frontend/src/lib/dealdash/finance.ts` and `schedule.ts` (pure calculation/scheduling engine)
+- `frontend/src/lib/dealdash/rate-scenario.ts` (standalone Rate Calculator math)
+- `frontend/src/lib/dealdash/import-fields.ts` and `normalization.ts` (CSV column mapping + row normalization)
 - `frontend/src/lib/dealdash/schedule-service.ts` (Prisma-backed read/write layer, cron poster)
 - `frontend/src/lib/dealdash/workspace.ts`
 - `frontend/src/lib/auth.ts`
