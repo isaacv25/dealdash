@@ -4,6 +4,7 @@ import {
   buildSchedule,
   datesForWeekly,
   datesForDaily,
+  firstPaymentAnchor,
   recastSchedule,
   applyPause,
   applyLoweredPayment,
@@ -12,6 +13,32 @@ import {
 } from "../schedule.ts";
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+
+test("firstPaymentAnchor starts the day after funding, not the funding day", () => {
+  const funded = day("2026-07-20"); // Monday
+  assert.equal(firstPaymentAnchor(funded).toISOString().slice(0, 10), "2026-07-21");
+});
+
+test("firstPaymentAnchor respects an explicit firstPaymentDate override", () => {
+  const funded = day("2026-07-20");
+  const explicit = day("2026-08-01");
+  assert.equal(firstPaymentAnchor(funded, explicit).toISOString().slice(0, 10), "2026-08-01");
+});
+
+test("daily schedule anchored the day after funding skips to the next business day", () => {
+  // Funded on Friday -> anchor is Saturday -> first daily payment rolls to Monday.
+  const fridayFunded = day("2026-07-24"); // Friday
+  const anchor = firstPaymentAnchor(fridayFunded); // Saturday 2026-07-25
+  const [first] = datesForDaily(anchor, 1);
+  assert.equal(first.toISOString().slice(0, 10), "2026-07-27"); // Monday
+  assert.equal(isWeekendUtc(first), false);
+});
+
+test("daily schedule funded mid-week starts the very next weekday", () => {
+  const tuesdayFunded = day("2026-07-21"); // Tuesday
+  const [first] = datesForDaily(firstPaymentAnchor(tuesdayFunded), 1);
+  assert.equal(first.toISOString().slice(0, 10), "2026-07-22"); // Wednesday
+});
 
 test("weekly schedule lands on the selected weekday for every supported day", () => {
   const monday = day("2026-07-20"); // a Monday

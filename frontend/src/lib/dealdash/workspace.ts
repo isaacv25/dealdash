@@ -23,7 +23,17 @@ function viewerFromUser(user: User & { company: { name: string } }): ViewerProfi
   };
 }
 
-function serializeFundedDeal(record: Prisma.FundedDealGetPayload<object>): FundedDeal {
+/** Per-deal rollup of the persisted payment schedule, keyed by fundedDealId. */
+interface ScheduleAggregate {
+  scheduledPaymentsCount: number;
+  postedPaymentsCount: number;
+  postedAmountCents: number;
+}
+
+function serializeFundedDeal(
+  record: Prisma.FundedDealGetPayload<object>,
+  scheduleAgg?: ScheduleAggregate,
+): FundedDeal {
   return {
     id: record.id,
     businessName: record.businessName,
@@ -61,6 +71,9 @@ function serializeFundedDeal(record: Prisma.FundedDealGetPayload<object>): Funde
     balanceOverrideReason: record.balanceOverrideReason ?? undefined,
     balanceOverrideSetByUserId: record.balanceOverrideSetByUserId ?? undefined,
     balanceOverrideSetAt: toIso(record.balanceOverrideSetAt),
+    scheduledPaymentsCount: scheduleAgg?.scheduledPaymentsCount,
+    postedPaymentsCount: scheduleAgg?.postedPaymentsCount,
+    postedAmount: scheduleAgg ? scheduleAgg.postedAmountCents / 100 : undefined,
   };
 }
 
@@ -272,8 +285,32 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
     prisma.importBatch.findMany({ where: { companyId }, orderBy: { importedAt: "desc" } }),
   ]);
 
+  // One grouped query rolls up the whole company's schedule so the funded board can render real,
+  // cron-posted repayment progress per deal without firing a request per card. Grouping by
+  // (deal, status) lets us separate "how many entries exist" from "how many/how much have posted".
+  const scheduleGroups = fundedDeals.length
+    ? await prisma.paymentScheduleEntry.groupBy({
+        by: ["fundedDealId", "status"],
+        where: { fundedDealId: { in: fundedDeals.map((deal) => deal.id) } },
+        _count: { _all: true },
+        _sum: { postedAmountCents: true, scheduledAmountCents: true },
+      })
+    : [];
+
+  const scheduleByDeal = new Map<string, ScheduleAggregate>();
+  for (const group of scheduleGroups) {
+    const agg = scheduleByDeal.get(group.fundedDealId) ?? { scheduledPaymentsCount: 0, postedPaymentsCount: 0, postedAmountCents: 0 };
+    agg.scheduledPaymentsCount += group._count._all;
+    if (group.status === "posted") {
+      agg.postedPaymentsCount += group._count._all;
+      // Prefer the actually-posted amount; fall back to the scheduled amount if a legacy row lacks it.
+      agg.postedAmountCents += group._sum.postedAmountCents ?? group._sum.scheduledAmountCents ?? 0;
+    }
+    scheduleByDeal.set(group.fundedDealId, agg);
+  }
+
   return {
-    fundedDeals: fundedDeals.map(serializeFundedDeal),
+    fundedDeals: fundedDeals.map((deal) => serializeFundedDeal(deal, scheduleByDeal.get(deal.id))),
     pipelineDeals: pipelineDeals.map(serializePipelineDeal),
     followUps: followUps.map(serializeFollowUp),
     importBatches: importBatches.map(serializeImportBatch),

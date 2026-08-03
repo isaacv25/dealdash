@@ -17,6 +17,7 @@ export function DecimalField({
   suffix,
   min,
   max,
+  decimals = 2,
   placeholder,
   className,
   ariaLabel,
@@ -26,6 +27,9 @@ export function DecimalField({
   suffix?: string;
   min?: number;
   max?: number;
+  /** Max decimal places kept on commit / when re-syncing the display. Factor rates want 3-4;
+   *  money and percentages want 2. Free-typing is never rounded mid-entry -- only on commit. */
+  decimals?: number;
   placeholder?: string;
   className?: string;
   ariaLabel?: string;
@@ -36,10 +40,13 @@ export function DecimalField({
 
   useEffect(() => {
     if (!focused) setDraft(formatValue(value));
-  }, [value, focused]);
+    // formatValue depends on `decimals`; re-sync if that ever changes too.
+  }, [value, focused, decimals]);
 
   function formatValue(v: number) {
-    return v === 0 ? "" : String(Math.round(v * 100) / 100);
+    if (v === 0) return "";
+    const factor = 10 ** decimals;
+    return String(Math.round(v * factor) / factor);
   }
 
   function commit(raw: string) {
@@ -47,6 +54,8 @@ export function DecimalField({
     let next = Number.isFinite(parsed) ? parsed : 0;
     if (min !== undefined) next = Math.max(min, next);
     if (max !== undefined) next = Math.min(max, next);
+    const factor = 10 ** decimals;
+    next = Math.round(next * factor) / factor;
     onCommit(next);
     setDraft(formatValue(next));
   }

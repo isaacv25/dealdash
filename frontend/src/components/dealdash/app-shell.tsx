@@ -55,7 +55,9 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
             </form>
           </div>
         </aside>
-        <section className="space-y-4">{children}</section>
+        {/* key on pathname so the page content remounts and replays dd-page-in on every
+            navigation -- gives the app a consistent cross-fade/translate between tabs. */}
+        <section key={pathname} className="dd-page-in space-y-4">{children}</section>
       </div>
     </main>
   );

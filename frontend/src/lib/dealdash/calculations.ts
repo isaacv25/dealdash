@@ -139,6 +139,26 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
     };
   }
 
+  // When a persisted schedule exists (workspace loader attaches the aggregate), repayment progress
+  // is driven by *actual* cron-posted payments rather than an elapsed-time estimate. This is what
+  // makes the board "automatically update as the deal is paid" -- each posted payment advances the
+  // bar for real, and the numbers can never drift from the schedule the way the estimate can.
+  if (deal.scheduledPaymentsCount && deal.scheduledPaymentsCount > 0) {
+    const postedPeriods = Math.min(deal.scheduledPaymentsCount, deal.postedPaymentsCount ?? 0);
+    const paidAmount = Math.min(grossPayback, deal.postedAmount ?? 0);
+    return {
+      grossPayback,
+      periodicPayment,
+      totalPeriods: deal.scheduledPaymentsCount,
+      completedPeriods: postedPeriods,
+      paymentsRemaining: Math.max(0, deal.scheduledPaymentsCount - postedPeriods),
+      paidAmount: roundCurrency(paidAmount),
+      balanceRemaining: roundCurrency(Math.max(0, grossPayback - paidAmount)),
+      progressPercent: grossPayback ? Math.min(100, Math.round((paidAmount / grossPayback) * 100)) : 0,
+      usesManualBalance: false,
+    };
+  }
+
   const fundedDate = deal.fundedDate ? new Date(deal.fundedDate) : undefined;
   if (!fundedDate || Number.isNaN(fundedDate.getTime())) {
     return {

@@ -15,8 +15,9 @@ export default function DocsPage() {
         <p className="mt-3">Browser state is now just an optimistic UI layer. The database is the system of record, so edits follow the user across devices and sessions.</p>
       </DocSection>
       <DocSection title="Funded progress and commissions">
-        <p>The funded-progress math prefers manual balance overrides whenever you know the exact live payoff. Otherwise it estimates the remaining balance from funded date, payment cadence, and gross payback so the dashboard still shows a realistic working balance.</p>
-        <p className="mt-3">Commission payout status is now tracked separately from deal performance status. That lets a file stay active while the commission itself is still pending, already paid out, or in clawback.</p>
+        <p>Each funded deal shows a compact summary card; click it to expand the full editor. Once a deal has a generated payment schedule, its progress bar tracks the <em>actual</em> payments the system posts each day, so the board updates automatically as the deal is paid. Daily deals pay Monday&ndash;Friday and start the day after funding; weekly deals let you pick the payment weekday. You can still override the balance directly whenever you know the exact live payoff.</p>
+        <p className="mt-3">Number fields (rate, points, payment amounts) are plain text boxes that accept decimals &mdash; type <span className="font-semibold">7.45</span> or <span className="font-semibold">10.4</span> directly, no spinner needed.</p>
+        <p className="mt-3">Commission payout status is tracked separately from deal performance status. That lets a file stay active while the commission itself is still pending, already paid out, or in clawback.</p>
       </DocSection>
       <DocSection title="Hidden financials">
         <p>Dashboard KPI cards each have their own eye/eye-off toggle to reveal or hide that specific number. The Rate Calculator is the one exception: its output is always visible, since it&apos;s deal-pricing math you need to see, not sensitive data pulled from your records.</p>

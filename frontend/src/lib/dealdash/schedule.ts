@@ -50,6 +50,17 @@ export function nextOrSameBusinessDay(from: Date): Date {
   return cursor;
 }
 
+/**
+ * The anchor a brand-new schedule is built from. Collection never starts on the funding day itself
+ * -- the first payment lands the day *after* funding (and, for daily deals, the first business day
+ * on or after that, since datesForDaily rolls weekends forward). An explicit firstPaymentDate, when
+ * the user has set one, always wins over this default.
+ */
+export function firstPaymentAnchor(fundedDate: Date, firstPaymentDate?: Date | null): Date {
+  if (firstPaymentDate) return firstPaymentDate;
+  return addUtcDays(fundedDate, 1);
+}
+
 export function datesForWeekly(anchor: Date, weekday: number, count: number): Date[] {
   if (count <= 0) return [];
   const first = nextOrSameWeekday(anchor, weekday);

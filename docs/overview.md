@@ -60,8 +60,9 @@ dealdash/
 ## Funded progress calculations
 
 - Gross payback = `fundedAmount * factorRate`, computed in integer cents (`frontend/src/lib/dealdash/finance.ts`) so results never drift from JS float rounding.
-- If a balance override is present (`balanceOverrideAmount`, or the legacy `manualBalanceRemaining` for deals that predate it), that value wins for the progress bar and "remaining" figure.
-- Otherwise DealDash estimates progress from funded date, payment cadence, and periodic payment amount -- this is a deliberate, documented estimate, not the schedule-backed authoritative balance.
+- Progress resolves in a strict priority order (see `docs/DATA_MODEL.md` "Repayment progress priority"): completed-schedule flag, then manual balance override, then **actual cron-posted schedule payments**, then an elapsed-time estimate as the fallback for deals without a generated schedule.
+- Because a generated schedule's posted payments drive the bar, the funded board "automatically updates as the deal is paid" -- the daily cron posts each due payment and the next page load reflects it, no manual balance edits required.
+- The Funded Progress cards are collapsed to a summary (badges, name, funder, funded amount, remaining balance, progress bar) and expand on click to the full inline editor + advanced servicing panel. Numeric fields are free-typing decimal text boxes (`DecimalField`), not spinner inputs, so values like `1.499` or `10.4` type cleanly.
 - Deals with a persisted payment schedule (see below) have a second, more precise balance available in the "Advanced adjustments" panel: calculated from actual posted `PaymentScheduleEntry` rows rather than elapsed-time estimation.
 - Renewal timing still defaults to 70% of the term unless manually overridden.
 - Commission payout status is tracked separately from the funded file status.

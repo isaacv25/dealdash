@@ -45,6 +45,15 @@ export interface FundedDeal {
   paymentWeekday?: number;
   firstPaymentDate?: string;
   scheduleCompletedAt?: string;
+  /**
+   * Live snapshot of the persisted payment schedule, aggregated by the workspace loader so the
+   * funded board can show *actual* repayment progress (driven by cron-posted payments) instead of a
+   * time-based estimate. Undefined when the deal has no generated schedule yet -- progress then
+   * falls back to the elapsed-time estimate. See progressForFundedDeal in calculations.ts.
+   */
+  scheduledPaymentsCount?: number;
+  postedPaymentsCount?: number;
+  postedAmount?: number;
   balanceOverrideAmount?: number;
   balanceOverrideEffectiveDate?: string;
   balanceOverrideReason?: string;
