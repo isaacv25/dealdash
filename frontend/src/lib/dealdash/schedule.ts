@@ -102,10 +102,24 @@ export function nextOrSameWeekday(from: Date, weekday: number): Date {
   return addUtcDays(from, delta);
 }
 
-/** First business day (Mon-Fri, and not a federal holiday) on or after `from`. */
+/** First business day (Mon-Fri, and not a federal holiday) on or after `from`. Daily schedules only. */
 export function nextOrSameBusinessDay(from: Date): Date {
   let cursor = from;
   while (isNonBankDayUtc(cursor)) {
+    cursor = addUtcDays(cursor, 1);
+  }
+  return cursor;
+}
+
+/**
+ * First date on or after `from` that isn't a federal holiday -- unlike nextOrSameBusinessDay, this
+ * does NOT skip weekends. Weekly schedules intentionally support any chosen weekday including
+ * Saturday/Sunday (that's the whole point of "pick a payment day"); only an *actual holiday* should
+ * ever move a weekly/monthly due date off the day the user chose.
+ */
+export function nextNonHolidayUtc(from: Date): Date {
+  let cursor = from;
+  while (isFederalHolidayUtc(cursor)) {
     cursor = addUtcDays(cursor, 1);
   }
   return cursor;
@@ -127,14 +141,15 @@ export function firstPaymentAnchor(fundedDate: Date, frequency: PaymentFrequency
 }
 
 /**
- * `nextOrSameBusinessDay` on each generated date, not just the anchor -- so a weekly or monthly
- * payment that would otherwise land exactly on a federal holiday shifts to the next business day
- * for that one occurrence, rather than silently scheduling a debit on a day nothing actually debits.
+ * `nextNonHolidayUtc` on each generated date, not just the anchor -- so a weekly payment that would
+ * otherwise land exactly on a federal holiday shifts one day for that occurrence, rather than
+ * silently scheduling a debit on a day nothing actually debits. Weekends are never shifted here: the
+ * chosen weekday (including Saturday/Sunday, if ever selected) is honored every other week.
  */
 export function datesForWeekly(anchor: Date, weekday: number, count: number): Date[] {
   if (count <= 0) return [];
   const first = nextOrSameWeekday(anchor, weekday);
-  return Array.from({ length: count }, (_, i) => nextOrSameBusinessDay(addUtcDays(first, i * 7)));
+  return Array.from({ length: count }, (_, i) => nextNonHolidayUtc(addUtcDays(first, i * 7)));
 }
 
 /** "Daily" means business days (Mon-Fri, excluding federal holidays) only. */
