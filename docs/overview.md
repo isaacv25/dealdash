@@ -64,10 +64,19 @@ dealdash/
 - Because a generated schedule's posted payments drive the bar, the funded board "automatically updates as the deal is paid" -- the daily cron posts each due payment and the next page load reflects it, no manual balance edits required.
 - The Funded Progress cards are collapsed to a summary (badges, name, funder, funded amount, remaining balance, progress bar) and expand on click to the full inline editor + advanced servicing panel. Numeric fields are free-typing decimal text boxes (`DecimalField`), not spinner inputs, so values like `1.499` or `10.4` type cleanly.
 - Deals with a persisted payment schedule (see below) have a second, more precise balance available in the "Advanced adjustments" panel: calculated from actual posted `PaymentScheduleEntry` rows rather than elapsed-time estimation.
-- Renewal timing still defaults to 70% of the term unless manually overridden.
+- Renewal timing defaults to **50%** of the term unless manually overridden (marketed once a deal is roughly half paid down, not near maturity).
 - Commission payout status is tracked separately from the funded file status.
 - Funded tags are persisted on `fundedTags` and augmented at render time from obvious status/math signals.
 - Tag tint priority is deliberate: clawback red wins, then paid-in-full green, then active blue.
+
+## Deal types
+
+Every funded deal has a `dealType`: **MCA** (default), **HELOC**, **Renewal**, or **Add-on**. MCA,
+Renewal, and Add-on all use the same factor-rate economics; Renewal/Add-on additionally support
+linking to an original MCA deal (`relatedDealId`) so a client's history is traceable. HELOC prices on
+Amount/APR/Term-years instead, with its factor-rate-shaped fields derived automatically (see
+`docs/DATA_MODEL.md` "Deal types"). Every deal type also has a PSF $ field, paid out at the broker
+split % alongside commission, tallied as Total Payout. See `docs/DATA_MODEL.md` for the full model.
 
 ## Payment schedule, adjustments, and cron automation
 
@@ -75,8 +84,13 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
 
 - Every funded deal can have a persisted `PaymentScheduleEntry` per contractual payment, generated or
   recast via the "Recalculate schedule" button on the deal card (`frontend/src/lib/dealdash/schedule.ts`
-  for the pure date/amount math, `schedule-service.ts` for the Prisma-backed read/write layer).
-- Weekly deals pick a payment weekday; daily deals post on business days only (no holiday calendar).
+  for the pure date/amount math, `schedule-service.ts` for the Prisma-backed read/write layer). A
+  deal's initial schedule is now also generated **automatically** the moment it has valid terms (see
+  "Automatic schedule generation" in `docs/DATA_MODEL.md`) -- no manual click required, and a
+  one-time backfill self-heals any deal that predates this (imports, seed data, older funded deals).
+- Weekly deals pick a payment weekday; daily deals post on business days only, and now also skip the
+  11 US federal holidays (computed algorithmically, not a hardcoded table -- see "Federal holiday
+  calendar" in `docs/DATA_MODEL.md`), not just weekends.
 - `/api/cron/post-payments`, called hourly by Vercel Cron and protected by `CRON_SECRET`, posts every
   due-or-overdue pending entry, timezone-aware via `frontend/src/lib/dealdash/timezone.ts`
   (America/New_York, DST-safe), and is idempotent by design (compare-and-swap updates keyed on

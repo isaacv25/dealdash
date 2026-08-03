@@ -102,6 +102,8 @@ export function normalizeFundedRow(row: CanonicalRow, sourceLabel: string, index
     fundedTags: [],
     notes: field(row, "notes"),
     sourceLabel,
+    dealType: "mca",
+    psfAmount: 0,
   };
 }
 

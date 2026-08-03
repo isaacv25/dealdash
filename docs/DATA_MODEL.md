@@ -68,12 +68,49 @@ DealDash is now multi-tenant at the company level.
 - `firstPaymentDate` (anchor for schedule generation; falls back to `fundedDate`)
 - `scheduleCompletedAt` (set once the persisted schedule's balance reaches zero)
 - `balanceOverrideCents`, `balanceOverrideEffectiveDate`, `balanceOverrideReason`, `balanceOverrideSetByUserId`, `balanceOverrideSetAt`
+- `dealType` (`mca` | `heloc` | `renewal` | `addon`, see "Deal types" below)
+- `aprPercent`, `termYears` (HELOC only)
+- `relatedDealId` (Renewal/Add-on only -- self-relation to the original `FundedDeal`)
+- `psfAmount` (Processing/Service Fee, flat $, every deal type -- see "PSF and Total Payout" below)
 
-The serialized `FundedDeal` the client receives also carries three read-only, loader-computed fields
-that are not stored columns: `scheduledPaymentsCount`, `postedPaymentsCount`, and `postedAmount`.
-`loadWorkspace` derives these once per page load by grouping the company's `PaymentScheduleEntry`
-rows, so the funded board can show *actual* cron-posted repayment progress per deal without a
-per-card query. They are undefined for deals with no generated schedule.
+The serialized `FundedDeal` the client receives also carries four read-only, loader-computed fields
+that are not stored columns: `scheduledPaymentsCount`, `postedPaymentsCount`, `postedAmount`, and
+`scheduleEndDate`. `loadWorkspace` derives these once per page load by grouping the company's
+`PaymentScheduleEntry` rows (including a `_max(dueDate)` for the maturity date), so the funded board
+can show *actual* cron-posted repayment progress and a real end date per deal without a per-card
+query. They are undefined for deals with no generated schedule.
+
+## Deal types
+
+`FundedDealType` (`frontend/prisma/schema.prisma`): `mca` | `heloc` | `renewal` | `addon`.
+
+- **mca**: the original/default shape -- `fundedAmount`/`factorRate`/`termValue`/`termUnit`/
+  `paymentFrequency`, unchanged.
+- **heloc**: prices on `fundedAmount`/`aprPercent`/`termYears` (10, 15, 20, or 30 -- see
+  `HELOC_TERM_YEARS` in `types.ts`) instead of a factor rate. Rather than thread a `dealType` branch
+  through every consumer of `FundedDeal` (progress bar, dashboard totals, CSV export, the cron
+  poster, the live preview in `funded-deal-panel.tsx`), a HELOC's `factorRate`/`termValue`/
+  `termUnit`/`paymentFrequency`/`paymentAmount` are **derived, not directly edited** fields:
+  `deriveHelocFields` (`finance.ts`) recomputes them from Amount/APR/Term every time `updateFundedDeal`
+  (`workspace.ts`) sees one of those three change, and persists them like normal columns.
+  `factorRate` becomes a synthetic value (`totalPayback / fundedAmount`) purely so
+  `fundedAmount * factorRate` -- used everywhere else in the codebase -- still recovers the correct
+  HELOC total payback. The HELOC payment itself is standard fixed-rate amortization
+  (`helocMonthlyPaymentCents`), always monthly; this deliberately ignores a real HELOC's separate
+  draw period, the same spirit as this codebase's other documented simplifications.
+- **renewal** / **addon**: economically still MCA-shaped (same factorRate/termValue fields, edited
+  directly); the only difference is an optional `relatedDealId` linking back to the original MCA
+  deal, so a client's deal history -- a renewal, or an add-on stacked on top of an existing position
+  -- is traceable from one record. `updateFundedDeal` rejects a link to a deal outside the caller's
+  company or to the deal itself.
+
+## PSF and Total Payout
+
+PSF (Processing/Service Fee) is a flat house-side dollar figure (`psfAmount`), paid out to the broker
+at the same split % as commission -- across every deal type, not just MCA. `psfPayout(deal)`
+(`calculations.ts`) = `psfAmount * commissionPercent`. `totalPayoutForFundedDeal(deal)` = the existing
+`commissionAmount` (already the broker's share of house points) + `psfPayout(deal)`. Both are shown
+in the Commission Model section of every funded deal card.
 
 ### Repayment progress priority
 
@@ -143,32 +180,57 @@ The user selects a payment weekday (Monday-Friday exposed in the UI; the schema 
 date, then steps forward 7 days per payment. Changing the weekday recasts only the still-pending
 tail of the schedule (see "Recast vs. rebuild" below) -- posted history keeps its original dates.
 
+### Federal holiday calendar
+
+`schedule.ts` computes the 11 US federal holidays algorithmically for any year (`federalHolidaysForYear`)
+-- not a hardcoded table, so it never goes stale. Each fixed-date holiday (New Year's, Juneteenth,
+Independence Day, Veterans Day, Christmas) is shifted to its bank-observed weekday when the literal
+date falls on a weekend (Saturday -> observed Friday, Sunday -> observed Monday); floating holidays
+(MLK Day, Presidents Day, Memorial Day, Labor Day, Columbus Day, Thanksgiving) are computed directly
+as the Nth weekday of their month. `isNonBankDayUtc` = weekend OR observed holiday. `nextOrSameBusinessDay`
+(used by daily schedules, and applied to every generated weekly/monthly date too) skips these days --
+nothing debits on a day nothing actually debits.
+
 ### First payment anchor
 
 Collection never starts on the funding day itself. `firstPaymentAnchor` (in `schedule.ts`) anchors a
-brand-new schedule to the day *after* `fundedDate`, unless the deal carries an explicit
-`firstPaymentDate`, which always wins. So a deal funded Monday has its first daily payment Tuesday,
-and a weekly deal's first payment lands on the chosen weekday on or after that next day (~a week
-out). Only the initial schedule uses this anchor; a recast anchors from its effective date instead,
-since a recast is always "from here forward" on an already-running deal.
+brand-new schedule based on frequency, unless the deal carries an explicit `firstPaymentDate`, which
+always wins over either default:
 
-### Daily schedules
+- **Daily/monthly**: the day *after* `fundedDate` (further rolled to the next business day by
+  `datesForDaily`/`datesForMonthly` if needed). Funded Friday -> first daily payment the following
+  Monday.
+- **Weekly**: a full week out -- `fundedDate + 7 days`, then the chosen weekday on or after that.
+  Funded Monday with weekday=Monday -> first payment is *next* Monday, exactly 7 days out, never a
+  same-week occurrence 1-6 days after funding.
 
-"Daily" means business days (Monday-Friday). `datesForDaily` skips Saturday/Sunday; there is no
-holiday calendar, so a bank holiday still generates a due date on that weekday (documented limitation
--- see the final report). Combined with the anchor rule above, a deal funded Friday has its first
-daily payment the following Monday (Saturday anchor rolls forward to the next business day).
+Only the initial schedule uses this anchor; a recast anchors from its effective date instead, since a
+recast is always "from here forward" on an already-running deal.
 
 ### Recast vs. rebuild
 
 - **Rebuild** (`generateInitialSchedule`): only valid when no schedule rows exist yet for a deal.
-  Generates the full schedule from scratch.
+  Generates the full schedule from scratch. As of the deal-types rework, this is also called
+  automatically -- see "Automatic schedule generation" below -- not only via the manual "Recalculate
+  schedule" button.
 - **Recast** (`recastDealSchedule`): the default, safe path once any payment has posted. Every
   `posted`/`skipped`/`paused` row is preserved exactly as-is; only `pending` rows are deleted and
   regenerated from an effective date forward, using the deal's current funded amount, factor rate,
   remaining term, and (for weekly deals) payment weekday. The UI's "Recalculate schedule" button
   requires an explicit confirmation click before recasting a deal that already has posted payments,
   so history is never silently rewritten.
+
+### Automatic schedule generation
+
+`maybeAutoGenerateSchedule` (`schedule-service.ts`) runs after every funded-deal save
+(`updateFundedDealAction`) and generates the deal's initial schedule the moment it has valid terms
+(funded date set, and a passing `validateDealCalculationInput`) and doesn't have one yet -- no need to
+click "Recalculate schedule" on a brand-new deal. It's awaited, not fire-and-forget, since a
+serverless function's execution can be frozen the instant it returns. `backfillMissingSchedules` runs
+once per `loadWorkspaceForUser` call (idempotent -- a single cheap query once nothing qualifies) and
+sweeps the whole company for any deal with valid terms but no schedule (imports, seed data, deals
+funded before this feature existed), self-healing the funded board's progress numbers without a
+manual step.
 
 ## Payment adjustments (`PaymentAdjustment`)
 

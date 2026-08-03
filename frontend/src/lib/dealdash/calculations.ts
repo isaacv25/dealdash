@@ -59,6 +59,20 @@ export function toTitleCase(value: string) {
     .join(" ");
 }
 
+/**
+ * PSF (Processing/Service Fee) is a flat house-side dollar figure, paid out to the broker at the
+ * same split % as commission -- across every deal type, not just MCA. Total Payout is the broker's
+ * full take: the existing commission $ (already the broker's share of house points) plus their share
+ * of PSF.
+ */
+export function psfPayout(deal: Pick<FundedDeal, "psfAmount" | "commissionPercent">) {
+  return roundCurrency(deal.psfAmount * Math.max(0, deal.commissionPercent));
+}
+
+export function totalPayoutForFundedDeal(deal: Pick<FundedDeal, "commissionAmount" | "psfAmount" | "commissionPercent">) {
+  return roundCurrency(deal.commissionAmount + psfPayout(deal));
+}
+
 export function grossPaybackFromDeal(deal: Pick<FundedDeal, "fundedAmount" | "factorRate">) {
   return roundCurrency(deal.fundedAmount * deal.factorRate);
 }
@@ -193,6 +207,9 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
   };
 }
 
+// Renewal is marketed once a deal is roughly half paid down, not near the end of term.
+const RENEWAL_TERM_FRACTION = 0.5;
+
 export function renewalDateForFundedDeal(deal: FundedDeal) {
   if (deal.manualRenewalDate) return deal.manualRenewalDate;
   if (!deal.fundedDate) return undefined;
@@ -201,11 +218,11 @@ export function renewalDateForFundedDeal(deal: FundedDeal) {
 
   const renewal = new Date(fundedDate);
   if (deal.termUnit === "days") {
-    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * 0.7));
+    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * RENEWAL_TERM_FRACTION));
   } else if (deal.termUnit === "weeks") {
-    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * 7 * 0.7));
+    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * 7 * RENEWAL_TERM_FRACTION));
   } else {
-    renewal.setMonth(renewal.getMonth() + Math.max(1, Math.round(deal.termValue * 0.7)));
+    renewal.setMonth(renewal.getMonth() + Math.max(1, Math.round(deal.termValue * RENEWAL_TERM_FRACTION)));
   }
   return renewal.toISOString();
 }

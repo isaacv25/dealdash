@@ -4,8 +4,12 @@ import {
   buildSchedule,
   datesForWeekly,
   datesForDaily,
+  federalHolidaysForYear,
   firstPaymentAnchor,
+  isFederalHolidayUtc,
+  isNonBankDayUtc,
   recastSchedule,
+  scheduleEndDate,
   applyPause,
   applyLoweredPayment,
   isWeekendUtc,
@@ -13,31 +17,87 @@ import {
 } from "../schedule.ts";
 
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-test("firstPaymentAnchor starts the day after funding, not the funding day", () => {
+test("firstPaymentAnchor starts the day after funding for daily deals, not the funding day", () => {
   const funded = day("2026-07-20"); // Monday
-  assert.equal(firstPaymentAnchor(funded).toISOString().slice(0, 10), "2026-07-21");
+  assert.equal(iso(firstPaymentAnchor(funded, "daily")), "2026-07-21");
 });
 
-test("firstPaymentAnchor respects an explicit firstPaymentDate override", () => {
+test("firstPaymentAnchor starts a full week out for weekly deals", () => {
+  const funded = day("2026-07-20"); // Monday
+  assert.equal(iso(firstPaymentAnchor(funded, "weekly")), "2026-07-27"); // next Monday, not this week
+});
+
+test("firstPaymentAnchor respects an explicit firstPaymentDate override for any frequency", () => {
   const funded = day("2026-07-20");
   const explicit = day("2026-08-01");
-  assert.equal(firstPaymentAnchor(funded, explicit).toISOString().slice(0, 10), "2026-08-01");
+  assert.equal(iso(firstPaymentAnchor(funded, "daily", explicit)), "2026-08-01");
+  assert.equal(iso(firstPaymentAnchor(funded, "weekly", explicit)), "2026-08-01");
 });
 
 test("daily schedule anchored the day after funding skips to the next business day", () => {
   // Funded on Friday -> anchor is Saturday -> first daily payment rolls to Monday.
   const fridayFunded = day("2026-07-24"); // Friday
-  const anchor = firstPaymentAnchor(fridayFunded); // Saturday 2026-07-25
+  const anchor = firstPaymentAnchor(fridayFunded, "daily"); // Saturday 2026-07-25
   const [first] = datesForDaily(anchor, 1);
-  assert.equal(first.toISOString().slice(0, 10), "2026-07-27"); // Monday
+  assert.equal(iso(first), "2026-07-27"); // Monday
   assert.equal(isWeekendUtc(first), false);
 });
 
 test("daily schedule funded mid-week starts the very next weekday", () => {
   const tuesdayFunded = day("2026-07-21"); // Tuesday
-  const [first] = datesForDaily(firstPaymentAnchor(tuesdayFunded), 1);
-  assert.equal(first.toISOString().slice(0, 10), "2026-07-22"); // Wednesday
+  const [first] = datesForDaily(firstPaymentAnchor(tuesdayFunded, "daily"), 1);
+  assert.equal(iso(first), "2026-07-22"); // Wednesday
+});
+
+test("weekly schedule funded on a weekday whose weekday is chosen lands exactly 7 days out", () => {
+  const mondayFunded = day("2026-07-20"); // Monday
+  const anchor = firstPaymentAnchor(mondayFunded, "weekly");
+  const [first] = datesForWeekly(anchor, 1 /* Monday */, 1);
+  assert.equal(iso(first), "2026-07-27"); // next Monday, one full week out
+});
+
+test("federal holiday calendar computes the expected 2026 dates", () => {
+  const holidays = federalHolidaysForYear(2026).map(iso);
+  assert.deepEqual(holidays, [
+    "2026-01-01", // New Year's Day (Thursday)
+    "2026-01-19", // MLK Day (3rd Monday of Jan)
+    "2026-02-16", // Presidents Day (3rd Monday of Feb)
+    "2026-05-25", // Memorial Day (last Monday of May)
+    "2026-06-19", // Juneteenth (Friday)
+    "2026-07-03", // Independence Day observed (July 4 is a Saturday -> observed Friday)
+    "2026-09-07", // Labor Day (1st Monday of Sept)
+    "2026-10-12", // Columbus Day (2nd Monday of Oct)
+    "2026-11-11", // Veterans Day (Wednesday)
+    "2026-11-26", // Thanksgiving (4th Thursday of Nov)
+    "2026-12-25", // Christmas Day (Friday)
+  ]);
+});
+
+test("a weekend holiday shifts business-day math to the observed weekday, not the literal date", () => {
+  // July 4, 2026 is a Saturday; the bank-observed holiday is Friday July 3.
+  assert.equal(isFederalHolidayUtc(day("2026-07-04")), false);
+  assert.equal(isFederalHolidayUtc(day("2026-07-03")), true);
+  assert.equal(isNonBankDayUtc(day("2026-07-03")), true);
+});
+
+test("daily schedule skips a federal holiday that falls on a weekday", () => {
+  // 2026-11-11 (Veterans Day, Wednesday) must not appear in the generated dates.
+  const dates = datesForDaily(day("2026-11-09"), 5).map(iso); // Monday anchor
+  assert.ok(!dates.includes("2026-11-11"));
+  assert.equal(dates.length, 5);
+});
+
+test("scheduleEndDate returns the due date of the final payment", () => {
+  const anchor = day("2026-07-21");
+  const end = scheduleEndDate(anchor, "daily", null, 10);
+  const all = datesForDaily(anchor, 10);
+  assert.equal(iso(end!), iso(all.at(-1)!));
+});
+
+test("scheduleEndDate returns undefined for zero periods", () => {
+  assert.equal(scheduleEndDate(day("2026-07-21"), "daily", null, 0), undefined);
 });
 
 test("weekly schedule lands on the selected weekday for every supported day", () => {

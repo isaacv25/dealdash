@@ -34,6 +34,67 @@ export function isWeekendUtc(date: Date): boolean {
   return day === 0 || day === 6;
 }
 
+// ── Federal holiday calendar ────────────────────────────────────────────────
+// Computed algorithmically (not a hardcoded table) so it never goes stale. Covers the 11 holidays
+// banks/the Federal Reserve observe. Each fixed-date holiday is shifted to its "observed" weekday
+// when the actual date falls on a weekend (Saturday -> observed Friday, Sunday -> observed Monday),
+// matching federal practice; floating holidays (already Mon/Thu) need no such shift.
+
+function nthWeekdayOfMonthUtc(year: number, monthIndex0: number, weekday: number, n: number): Date {
+  if (n > 0) {
+    const first = new Date(Date.UTC(year, monthIndex0, 1));
+    const offset = (weekday - first.getUTCDay() + 7) % 7;
+    return new Date(Date.UTC(year, monthIndex0, 1 + offset + (n - 1) * 7));
+  }
+  // n < 0: count back from the last day of the month (e.g. -1 = last occurrence).
+  const lastDayOfMonth = new Date(Date.UTC(year, monthIndex0 + 1, 0));
+  const offset = (lastDayOfMonth.getUTCDay() - weekday + 7) % 7;
+  return addUtcDays(lastDayOfMonth, -offset);
+}
+
+function observedDate(fixedDate: Date): Date {
+  const day = fixedDate.getUTCDay();
+  if (day === 6) return addUtcDays(fixedDate, -1);
+  if (day === 0) return addUtcDays(fixedDate, 1);
+  return fixedDate;
+}
+
+/** The 11 US federal holidays (observed dates) for a given calendar year, in date order. */
+export function federalHolidaysForYear(year: number): Date[] {
+  return [
+    observedDate(new Date(Date.UTC(year, 0, 1))), // New Year's Day
+    nthWeekdayOfMonthUtc(year, 0, 1, 3), // Martin Luther King Jr. Day -- 3rd Monday of January
+    nthWeekdayOfMonthUtc(year, 1, 1, 3), // Washington's Birthday (Presidents Day) -- 3rd Monday of February
+    nthWeekdayOfMonthUtc(year, 4, 1, -1), // Memorial Day -- last Monday of May
+    observedDate(new Date(Date.UTC(year, 5, 19))), // Juneteenth
+    observedDate(new Date(Date.UTC(year, 6, 4))), // Independence Day
+    nthWeekdayOfMonthUtc(year, 8, 1, 1), // Labor Day -- 1st Monday of September
+    nthWeekdayOfMonthUtc(year, 9, 1, 2), // Columbus Day -- 2nd Monday of October
+    observedDate(new Date(Date.UTC(year, 10, 11))), // Veterans Day
+    nthWeekdayOfMonthUtc(year, 10, 4, 4), // Thanksgiving -- 4th Thursday of November
+    observedDate(new Date(Date.UTC(year, 11, 25))), // Christmas Day
+  ];
+}
+
+const holidaySetCache = new Map<number, Set<string>>();
+function holidaySetForYear(year: number): Set<string> {
+  let set = holidaySetCache.get(year);
+  if (!set) {
+    set = new Set(federalHolidaysForYear(year).map((d) => d.toISOString().slice(0, 10)));
+    holidaySetCache.set(year, set);
+  }
+  return set;
+}
+
+export function isFederalHolidayUtc(date: Date): boolean {
+  return holidaySetForYear(date.getUTCFullYear()).has(date.toISOString().slice(0, 10));
+}
+
+/** True for a weekend day OR an observed federal holiday -- i.e. a day nothing debits on. */
+export function isNonBankDayUtc(date: Date): boolean {
+  return isWeekendUtc(date) || isFederalHolidayUtc(date);
+}
+
 /** Returns the first date on or after `from` whose UTC weekday matches `weekday` (0=Sun..6=Sat). */
 export function nextOrSameWeekday(from: Date, weekday: number): Date {
   const currentDay = from.getUTCDay();
@@ -41,33 +102,42 @@ export function nextOrSameWeekday(from: Date, weekday: number): Date {
   return addUtcDays(from, delta);
 }
 
-/** First business day (Mon-Fri) on or after `from`. */
+/** First business day (Mon-Fri, and not a federal holiday) on or after `from`. */
 export function nextOrSameBusinessDay(from: Date): Date {
   let cursor = from;
-  while (isWeekendUtc(cursor)) {
+  while (isNonBankDayUtc(cursor)) {
     cursor = addUtcDays(cursor, 1);
   }
   return cursor;
 }
 
 /**
- * The anchor a brand-new schedule is built from. Collection never starts on the funding day itself
- * -- the first payment lands the day *after* funding (and, for daily deals, the first business day
- * on or after that, since datesForDaily rolls weekends forward). An explicit firstPaymentDate, when
- * the user has set one, always wins over this default.
+ * The anchor a brand-new schedule is built from. Collection never starts on the funding day itself.
+ * Daily/monthly deals start the day after funding (datesForDaily/datesForMonthly further roll a
+ * non-bank day forward). Weekly deals start a full week out -- the first payment lands on the
+ * selected weekday during the week *following* funding (e.g. funded Monday, weekday Monday -> first
+ * payment is next Monday, exactly 7 days out; funded Monday, weekday Wednesday -> first payment is
+ * the Wednesday 9-13 days out, never the same-week Wednesday 2 days after funding). An explicit
+ * firstPaymentDate, when the user has set one, always wins over either default.
  */
-export function firstPaymentAnchor(fundedDate: Date, firstPaymentDate?: Date | null): Date {
+export function firstPaymentAnchor(fundedDate: Date, frequency: PaymentFrequency, firstPaymentDate?: Date | null): Date {
   if (firstPaymentDate) return firstPaymentDate;
+  if (frequency === "weekly") return addUtcDays(fundedDate, 7);
   return addUtcDays(fundedDate, 1);
 }
 
+/**
+ * `nextOrSameBusinessDay` on each generated date, not just the anchor -- so a weekly or monthly
+ * payment that would otherwise land exactly on a federal holiday shifts to the next business day
+ * for that one occurrence, rather than silently scheduling a debit on a day nothing actually debits.
+ */
 export function datesForWeekly(anchor: Date, weekday: number, count: number): Date[] {
   if (count <= 0) return [];
   const first = nextOrSameWeekday(anchor, weekday);
-  return Array.from({ length: count }, (_, i) => addUtcDays(first, i * 7));
+  return Array.from({ length: count }, (_, i) => nextOrSameBusinessDay(addUtcDays(first, i * 7)));
 }
 
-/** Unless a holiday calendar is introduced, "daily" means business days (Mon-Fri) only. */
+/** "Daily" means business days (Mon-Fri, excluding federal holidays) only. */
 export function datesForDaily(anchor: Date, count: number): Date[] {
   if (count <= 0) return [];
   const dates: Date[] = [];
@@ -86,8 +156,16 @@ export function datesForMonthly(anchor: Date, count: number): Date[] {
     const d = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() + i, 1));
     const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
     d.setUTCDate(Math.min(dayOfMonth, daysInMonth));
-    return d;
+    return nextOrSameBusinessDay(d);
   });
+}
+
+function datesForFrequency(anchorDate: Date, frequency: PaymentFrequency, weekday: number | null, periods: number): Date[] {
+  return frequency === "weekly"
+    ? datesForWeekly(anchorDate, weekday ?? anchorDate.getUTCDay(), periods)
+    : frequency === "monthly"
+      ? datesForMonthly(anchorDate, periods)
+      : datesForDaily(anchorDate, periods);
 }
 
 export interface BuildScheduleParams {
@@ -100,13 +178,7 @@ export interface BuildScheduleParams {
 
 /** Builds a brand-new schedule from scratch (used on deal creation or a full rebuild). */
 export function buildSchedule({ anchorDate, frequency, weekday, periods, totalCents }: BuildScheduleParams): ScheduleEntry[] {
-  const dates =
-    frequency === "weekly"
-      ? datesForWeekly(anchorDate, weekday ?? anchorDate.getUTCDay(), periods)
-      : frequency === "monthly"
-        ? datesForMonthly(anchorDate, periods)
-        : datesForDaily(anchorDate, periods);
-
+  const dates = datesForFrequency(anchorDate, frequency, weekday, periods);
   const amounts = buildEvenScheduleAmountsCents(totalCents, periods);
   return dates.map((dueDate, i) => ({
     sequence: i + 1,
@@ -114,6 +186,16 @@ export function buildSchedule({ anchorDate, frequency, weekday, periods, totalCe
     scheduledAmountCents: amounts[i] ?? 0,
     status: "pending" as const,
   }));
+}
+
+/**
+ * The deal's maturity/end date for a brand-new schedule with these terms -- the due date of the
+ * last scheduled payment. Used both to persist a real end date once a schedule exists and to show an
+ * estimated one before a schedule has been generated.
+ */
+export function scheduleEndDate(anchorDate: Date, frequency: PaymentFrequency, weekday: number | null, periods: number): Date | undefined {
+  if (periods <= 0) return undefined;
+  return datesForFrequency(anchorDate, frequency, weekday, periods).at(-1);
 }
 
 export interface RecastParams {

@@ -79,12 +79,13 @@ export async function generateInitialSchedule(dealId: string, context: DealAudit
     const calc = calculateDeal(calcInput);
     if (calc.periods <= 0 || calc.totalPaybackCents <= 0) return [];
 
-    // Collection starts the day after funding, never the funding day itself (see firstPaymentAnchor).
-    // The default weekday for weekly deals is derived from the funding day so an unspecified weekday
-    // still lands the first payment ~a week out rather than on an arbitrary day.
+    // Collection starts the day after funding (a full week out for weekly deals), never the funding
+    // day itself -- see firstPaymentAnchor. The default weekday for weekly deals is derived from the
+    // funding day so an unspecified weekday still lands the first payment exactly a week out.
     const fundedOrNow = deal.fundedDate ?? new Date();
-    const anchor = firstPaymentAnchor(fundedOrNow, deal.firstPaymentDate);
-    const weekday = deal.paymentFrequency === "weekly" ? (deal.paymentWeekday ?? fundedOrNow.getUTCDay()) : null;
+    const frequency = deal.paymentFrequency as PaymentFrequency;
+    const anchor = firstPaymentAnchor(fundedOrNow, frequency, deal.firstPaymentDate);
+    const weekday = frequency === "weekly" ? (deal.paymentWeekday ?? fundedOrNow.getUTCDay()) : null;
 
     const entries = buildSchedule({
       anchorDate: anchor,
@@ -413,6 +414,60 @@ export async function migrateLegacyBalanceOverrides(companyId: string, context: 
   }
 
   return candidates.length;
+}
+
+/**
+ * Auto-generates a deal's initial schedule the moment it has everything needed to be scheduled --
+ * called after every funded-deal save (see updateFundedDealAction) so nobody has to remember to
+ * click "Recalculate schedule" on a brand-new deal. A no-op (not an error) if a schedule already
+ * exists or the deal's terms aren't complete/valid yet -- a deal being filled in field-by-field must
+ * never fail to save just because it isn't "fundable" as of this particular keystroke. HELOC deals
+ * work here unchanged: by the time this runs, deriveHelocFields (see updateFundedDeal in
+ * workspace.ts) has already synthesized factorRate/termValue/paymentFrequency for them.
+ */
+export async function maybeAutoGenerateSchedule(dealId: string, context: DealAuditContext): Promise<boolean> {
+  const deal = await prisma.fundedDeal.findUnique({ where: { id: dealId } });
+  if (!deal || deal.deletedAt || !deal.fundedDate) return false;
+
+  const existingCount = await prisma.paymentScheduleEntry.count({ where: { fundedDealId: dealId } });
+  if (existingCount > 0) return false;
+
+  const calcInput = dealCalculationInput(deal);
+  if (validateDealCalculationInput(calcInput).length > 0) return false;
+
+  try {
+    await generateInitialSchedule(dealId, context);
+    return true;
+  } catch {
+    // generateInitialSchedule re-validates and can still decline (e.g. a race where a schedule was
+    // just created by a concurrent save) -- that's fine, the user can trigger it manually.
+    return false;
+  }
+}
+
+/**
+ * One-time-per-deal, idempotent sweep: generates a schedule for every funded deal in the company
+ * that has valid terms but no schedule yet -- covers deals that existed before auto-generation was
+ * added (imports, seed data, deals funded before this feature shipped). Called on every workspace
+ * load; once nothing qualifies, it's a single cheap query and returns immediately.
+ */
+export async function backfillMissingSchedules(companyId: string, context: DealAuditContext): Promise<number> {
+  const candidates = await prisma.fundedDeal.findMany({
+    where: { companyId, deletedAt: null, fundedDate: { not: null }, paymentSchedule: { none: {} } },
+  });
+
+  let generated = 0;
+  for (const deal of candidates) {
+    if (validateDealCalculationInput(dealCalculationInput(deal)).length > 0) continue;
+    try {
+      await generateInitialSchedule(deal.id, context);
+      generated += 1;
+    } catch {
+      // Leave it for the user to resolve manually via "Recalculate schedule" if something about this
+      // particular deal's data trips a validation rule the coarse check above didn't catch.
+    }
+  }
+  return generated;
 }
 
 export interface CalculatedBalance {

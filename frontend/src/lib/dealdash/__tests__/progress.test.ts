@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { progressForFundedDeal } from "../calculations.ts";
+import { progressForFundedDeal, psfPayout, renewalDateForFundedDeal, totalPayoutForFundedDeal } from "../calculations.ts";
 import type { FundedDeal } from "../types.ts";
 
 // Minimal funded-deal fixture: $50k at 1.4 over 20 weekly payments = $70,000 total payback,
@@ -28,6 +28,8 @@ function deal(overrides: Partial<FundedDeal> = {}): FundedDeal {
     fundedTags: [],
     notes: "",
     sourceLabel: "test",
+    dealType: "mca",
+    psfAmount: 0,
     ...overrides,
   };
 }
@@ -66,4 +68,43 @@ test("with no schedule and no override, progress falls back to the elapsed-time 
   const result = progressForFundedDeal(deal({ fundedDate: "2020-01-01T00:00:00.000Z" }));
   assert.equal(result.progressPercent, 100); // long elapsed time saturates the estimate
   assert.equal(result.usesManualBalance, false);
+});
+
+test("renewal date is marketed at 50% of a weekly term, not 70%", () => {
+  const fundedDateIso = "2026-01-01T00:00:00.000Z";
+  const result = renewalDateForFundedDeal(deal({ fundedDate: fundedDateIso, termUnit: "weeks", termValue: 20 }));
+  // renewalDateForFundedDeal uses local Date#setDate (matching its existing, pre-this-change
+  // behavior) -- mirror that exact construction here so the assertion holds regardless of the
+  // environment's timezone, rather than asserting a hardcoded UTC instant.
+  const expected = new Date(fundedDateIso);
+  expected.setDate(expected.getDate() + 20 * 7 * 0.5); // 20 weeks * 50% = 10 weeks = 70 days
+  assert.equal(result, expected.toISOString());
+});
+
+test("an explicit manualRenewalDate always overrides the computed default", () => {
+  const result = renewalDateForFundedDeal(
+    deal({ fundedDate: "2026-01-01T00:00:00.000Z", termUnit: "weeks", termValue: 20, manualRenewalDate: "2026-06-01T00:00:00.000Z" }),
+  );
+  assert.equal(result, "2026-06-01T00:00:00.000Z");
+});
+
+// ── PSF / Total Payout ──────────────────────────────────────────────────────
+
+test("PSF payout is the flat PSF amount times the broker split percent", () => {
+  const result = psfPayout(deal({ psfAmount: 1000, commissionPercent: 0.3 }));
+  assert.equal(result, 300);
+});
+
+test("PSF payout is zero when no PSF amount is set", () => {
+  assert.equal(psfPayout(deal({ psfAmount: 0, commissionPercent: 0.3 })), 0);
+});
+
+test("total payout is commission plus PSF payout, not PSF alone", () => {
+  const result = totalPayoutForFundedDeal(deal({ commissionAmount: 500, psfAmount: 1000, commissionPercent: 0.3 }));
+  assert.equal(result, 500 + 300); // 500 commission + (1000 * 0.3) PSF payout
+});
+
+test("a negative commission percent never turns PSF payout negative", () => {
+  const result = psfPayout(deal({ psfAmount: 1000, commissionPercent: -0.5 }));
+  assert.equal(result, 0);
 });

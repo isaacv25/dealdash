@@ -28,6 +28,7 @@ import {
   getAuditHistoryForDeal,
   getCalculatedBalance,
   getScheduleForDeal,
+  maybeAutoGenerateSchedule,
   recastDealSchedule,
   resetBalanceOverride,
   setBalanceOverride,
@@ -52,7 +53,18 @@ export async function createFundedDealAction(fundedDate?: string) {
 
 export async function updateFundedDealAction(id: string, patch: Partial<FundedDeal>) {
   const user = await getScopedUser();
-  return updateFundedDeal(user.companyId, user.id, id, patch);
+  const updated = await updateFundedDeal(user.companyId, user.id, id, patch);
+  // A deal that just became "complete" (valid amount/rate-or-APR/term/funded date) gets its payment
+  // schedule generated automatically, without the user needing to click "Recalculate schedule"
+  // themselves. Awaited (not fire-and-forget) since a serverless function's execution can be frozen
+  // the instant it returns -- an un-awaited promise here could simply never finish. Best-effort:
+  // failure here must never fail the save the user is actually waiting on.
+  try {
+    await maybeAutoGenerateSchedule(id, { userId: user.id, reason: "Auto-generated on funding" });
+  } catch {
+    // Non-fatal -- the user can still trigger it manually via "Recalculate schedule".
+  }
+  return updated;
 }
 
 export async function deleteFundedDealAction(id: string) {
