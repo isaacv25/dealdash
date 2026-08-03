@@ -2,6 +2,8 @@ import type { Prisma, User } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { createBlankFollowUp, createBlankFundedDeal, createBlankPipelineDeal } from "./defaults";
 import { createRealDataset, loadSeedDataset } from "./data";
+import { deriveHelocFields } from "./finance";
+import { backfillMissingSchedules } from "./schedule-service";
 import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset, TrashRecord, TrashRecordType, ViewerProfile } from "./types";
 
 const TRASH_RETENTION_DAYS = 30;
@@ -28,6 +30,8 @@ interface ScheduleAggregate {
   scheduledPaymentsCount: number;
   postedPaymentsCount: number;
   postedAmountCents: number;
+  /** Latest due date seen across all of the deal's schedule entries -- its real maturity date. */
+  endDate?: Date;
 }
 
 function serializeFundedDeal(
@@ -74,6 +78,12 @@ function serializeFundedDeal(
     scheduledPaymentsCount: scheduleAgg?.scheduledPaymentsCount,
     postedPaymentsCount: scheduleAgg?.postedPaymentsCount,
     postedAmount: scheduleAgg ? scheduleAgg.postedAmountCents / 100 : undefined,
+    scheduleEndDate: toIso(scheduleAgg?.endDate),
+    dealType: record.dealType as FundedDeal["dealType"],
+    aprPercent: record.aprPercent ?? undefined,
+    termYears: record.termYears ?? undefined,
+    relatedDealId: record.relatedDealId ?? undefined,
+    psfAmount: record.psfAmount,
   };
 }
 
@@ -294,6 +304,7 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
         where: { fundedDealId: { in: fundedDeals.map((deal) => deal.id) } },
         _count: { _all: true },
         _sum: { postedAmountCents: true, scheduledAmountCents: true },
+        _max: { dueDate: true },
       })
     : [];
 
@@ -305,6 +316,10 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
       agg.postedPaymentsCount += group._count._all;
       // Prefer the actually-posted amount; fall back to the scheduled amount if a legacy row lacks it.
       agg.postedAmountCents += group._sum.postedAmountCents ?? group._sum.scheduledAmountCents ?? 0;
+    }
+    // The overall maturity date is the latest due date across every status group for this deal.
+    if (group._max.dueDate && (!agg.endDate || group._max.dueDate > agg.endDate)) {
+      agg.endDate = group._max.dueDate;
     }
     scheduleByDeal.set(group.fundedDealId, agg);
   }
@@ -322,6 +337,14 @@ export async function loadWorkspaceForUser(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId }, include: { company: true } });
   if (!user) {
     throw new Error("User not found.");
+  }
+  // Idempotent self-heal: any deal with valid terms but no schedule yet (imported, seeded, or funded
+  // before auto-generation existed) gets one generated before the page renders. Cheap once caught up
+  // -- the query finds nothing and this is a no-op. Never let a hiccup here block the page load.
+  try {
+    await backfillMissingSchedules(user.companyId, { userId, reason: "Backfilled on workspace load" });
+  } catch {
+    // Best-effort; the user can still generate a schedule manually per-deal.
   }
   return {
     viewer: viewerFromUser(user),
@@ -360,6 +383,11 @@ function fundedUpdateData(patch: Partial<FundedDeal>, userId: string): Prisma.Fu
     ...(patch.manualRenewalDate !== undefined ? { manualRenewalDate: patch.manualRenewalDate ? new Date(patch.manualRenewalDate) : null } : {}),
     ...(patch.paymentWeekday !== undefined ? { paymentWeekday: patch.paymentWeekday ?? null } : {}),
     ...(patch.firstPaymentDate !== undefined ? { firstPaymentDate: patch.firstPaymentDate ? new Date(patch.firstPaymentDate) : null } : {}),
+    ...(patch.dealType !== undefined ? { dealType: patch.dealType } : {}),
+    ...(patch.aprPercent !== undefined ? { aprPercent: patch.aprPercent ?? null } : {}),
+    ...(patch.termYears !== undefined ? { termYears: patch.termYears ?? null } : {}),
+    ...(patch.relatedDealId !== undefined ? { relatedDeal: patch.relatedDealId ? { connect: { id: patch.relatedDealId } } : { disconnect: true } } : {}),
+    ...(patch.psfAmount !== undefined ? { psfAmount: patch.psfAmount } : {}),
     // balanceOverride* fields are intentionally excluded here: they may only be written through
     // setBalanceOverride/resetBalanceOverride (schedule-service.ts), which enforce an effective
     // date, a reason, and an audit-trail entry. A generic field patch must never bypass that.
@@ -453,6 +481,8 @@ export async function createFundedDeal(companyId: string, userId: string, funded
       fundedTags: draft.fundedTags,
       notes: draft.notes,
       sourceLabel: draft.sourceLabel,
+      dealType: draft.dealType,
+      psfAmount: draft.psfAmount,
     },
   });
   return serializeFundedDeal(created);
@@ -460,7 +490,33 @@ export async function createFundedDeal(companyId: string, userId: string, funded
 
 export async function updateFundedDeal(companyId: string, userId: string, id: string, patch: Partial<FundedDeal>) {
   await requireOwnedFundedDeal(companyId, id);
-  const updated = await prisma.fundedDeal.update({ where: { id }, data: fundedUpdateData(patch, userId) });
+  // A linked deal (Renewal/Add-on -> original MCA) must belong to the same company and can't be the
+  // deal itself, or the "trace a client's history" link would either leak across tenants or cycle.
+  if (patch.relatedDealId) {
+    if (patch.relatedDealId === id) throw new Error("A deal cannot be linked to itself.");
+    await requireOwnedFundedDeal(companyId, patch.relatedDealId);
+  }
+
+  // HELOC's factorRate/termValue/termUnit/paymentFrequency/paymentAmount are derived, not directly
+  // edited (see deriveHelocFields) -- recompute them whenever the patch touches anything they depend
+  // on, merging the current record's values for whichever of the three inputs weren't part of this
+  // particular save (the UI saves one field at a time).
+  let derivedPatch: Partial<FundedDeal> = {};
+  const touchesHelocInputs =
+    patch.dealType !== undefined || patch.fundedAmount !== undefined || patch.aprPercent !== undefined || patch.termYears !== undefined;
+  if (touchesHelocInputs) {
+    const current = await prisma.fundedDeal.findUniqueOrThrow({ where: { id } });
+    const effectiveDealType = patch.dealType ?? (current.dealType as FundedDeal["dealType"]);
+    if (effectiveDealType === "heloc") {
+      derivedPatch = deriveHelocFields(
+        patch.fundedAmount ?? current.fundedAmount,
+        patch.aprPercent ?? current.aprPercent ?? 0,
+        patch.termYears ?? current.termYears ?? 0,
+      );
+    }
+  }
+
+  const updated = await prisma.fundedDeal.update({ where: { id }, data: fundedUpdateData({ ...patch, ...derivedPatch }, userId) });
   return serializeFundedDeal(updated);
 }
 
@@ -652,6 +708,8 @@ export async function importWorkspaceData(
           sourceLabel: deal.sourceLabel,
           manualBalanceRemaining: deal.manualBalanceRemaining ?? null,
           manualRenewalDate: deal.manualRenewalDate ? new Date(deal.manualRenewalDate) : null,
+          dealType: deal.dealType,
+          psfAmount: deal.psfAmount,
         },
         update: fundedUpdateData({ ...deal, sourceLabel: deal.sourceLabel }, userId),
       });

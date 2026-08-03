@@ -24,6 +24,8 @@ export function createBlankFundedDeal(fundedDate = new Date().toISOString()): Fu
     fundedTags: ["active"],
     notes: "",
     sourceLabel: "manual",
+    dealType: "mca",
+    psfAmount: 0,
   };
 }
 

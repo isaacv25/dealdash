@@ -51,6 +51,13 @@ model Session {
   createdAt DateTime @default(now())
 }
 
+enum FundedDealType {
+  mca
+  heloc
+  renewal
+  addon
+}
+
 model FundedDeal {
   id                     String    @id @default(cuid())
   companyId              String
@@ -88,6 +95,22 @@ model FundedDeal {
   deletedAt              DateTime?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
+
+  // --- Deal type taxonomy ---
+  // mca: the original/default deal shape above (factorRate/termValue/termUnit/paymentFrequency).
+  // heloc: uses aprPercent + termYears instead of factorRate/termValue; simple amortized payment.
+  // renewal / addon: still MCA-shaped economics, but relatedDealId links back to the original MCA
+  // deal so a client's deal history (renewals, stacked positions) can be traced from one record.
+  dealType     FundedDealType @default(mca)
+  aprPercent   Float?
+  termYears    Int?
+  relatedDealId String?
+  relatedDeal  FundedDeal?  @relation("DealRelation", fields: [relatedDealId], references: [id], onDelete: SetNull)
+  relatedFrom  FundedDeal[] @relation("DealRelation")
+
+  // Flat-dollar Processing/Service Fee, paid out at the same broker split % as commission -- applies
+  // across every deal type. commissionAmount + (psfAmount * commissionPercent) = total payout.
+  psfAmount Float @default(0)
 
   // Weekday selected for weekly payment schedules (0 = Sunday .. 6 = Saturday). Null until a
   // schedule has been generated, at which point it is required for weekly-frequency deals.

@@ -2,6 +2,15 @@ export type PaymentFrequency = "daily" | "weekly" | "monthly";
 export type TermUnit = "days" | "weeks" | "months";
 export type CommissionStatus = "pending" | "paid-out" | "clawback";
 export type FundedTag = "clawback" | "paid-epa" | "paid-in-full" | "active" | "commission" | "potential-renewal";
+/**
+ * mca: the default deal shape (factorRate/termValue/termUnit/paymentFrequency).
+ * heloc: uses aprPercent + termYears instead; a simple amortized monthly payment.
+ * renewal / addon: still MCA-shaped economics, but can link to an original MCA deal via
+ * relatedDealId so a client's deal history (renewals, stacked positions) is traceable.
+ */
+export type FundedDealType = "mca" | "heloc" | "renewal" | "addon";
+/** Only the standard HELOC term lengths are offered in the UI. */
+export const HELOC_TERM_YEARS = [10, 15, 20, 30] as const;
 export type PipelineStage =
   | "new-lead"
   | "submitted"
@@ -54,6 +63,17 @@ export interface FundedDeal {
   scheduledPaymentsCount?: number;
   postedPaymentsCount?: number;
   postedAmount?: number;
+  /** Due date of the last persisted schedule entry -- the deal's real maturity date, when a schedule exists. */
+  scheduleEndDate?: string;
+  dealType: FundedDealType;
+  /** HELOC only. */
+  aprPercent?: number;
+  /** HELOC only -- one of HELOC_TERM_YEARS. */
+  termYears?: number;
+  /** Renewal/Add-on only: the original MCA deal this one traces back to. */
+  relatedDealId?: string;
+  /** Flat-dollar Processing/Service Fee; payout = psfAmount * commissionPercent, for every deal type. */
+  psfAmount: number;
   balanceOverrideAmount?: number;
   balanceOverrideEffectiveDate?: string;
   balanceOverrideReason?: string;

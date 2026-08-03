@@ -1,12 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  calculateAnyDeal,
   calculateDeal,
+  calculateHelocDeal,
   dollarsToCents,
   factorRateToBasisPoints,
   buildEvenScheduleAmountsCents,
+  helocMonthlyPaymentCents,
   totalPaybackCents,
   validateDealCalculationInput,
+  validateHelocCalculationInput,
   normalizeSyndicationPercent,
   syndicationPercentToDisplay,
   MIN_FACTOR_RATE,
@@ -117,4 +121,75 @@ test("rejects syndication percent outside 0-100", () => {
 test("accepts a valid deal with no errors", () => {
   const errors = validateDealCalculationInput({ fundedAmount: 100000, factorRate: 1.4, termValue: 100, paymentFrequency: "daily", syndicationPercent: 12.5 });
   assert.deepEqual(errors, []);
+});
+
+// ── HELOC ────────────────────────────────────────────────────────────────────
+
+test("HELOC at 0% APR is an exact even split with no interest", () => {
+  assert.equal(helocMonthlyPaymentCents(1_200_000, 0, 12), 100_000); // $12,000 / 12mo = $1,000/mo exactly
+});
+
+test("HELOC monthly payment for $100k/6%/30yr lands in the well-known ballpark (~$599.55)", () => {
+  // Loose cent-level bound (not an exact magic number) since this exercises real floating-point
+  // amortization math -- still tight enough to catch a gross formula error (wrong rate scaling,
+  // wrong period count, etc.) while not being flaky over a single cent of rounding.
+  const cents = helocMonthlyPaymentCents(10_000_000, 6, 360);
+  assert.ok(cents > 59_900 && cents < 60_000, `expected ~59955, got ${cents}`);
+});
+
+test("HELOC payment increases with APR for the same principal and term", () => {
+  const low = helocMonthlyPaymentCents(10_000_000, 3, 180);
+  const high = helocMonthlyPaymentCents(10_000_000, 9, 180);
+  assert.ok(high > low);
+});
+
+test("HELOC total payback is exactly the level payment times the period count", () => {
+  const result = calculateHelocDeal({ fundedAmount: 100_000, aprPercent: 6, termYears: 15 });
+  assert.equal(result.periods, 180);
+  assert.equal(result.termUnit, "months");
+  assert.equal(result.totalPaybackCents, result.scheduledPaymentCents * 180);
+  const sum = result.scheduleAmountsCents.reduce((a, b) => a + b, 0);
+  assert.equal(sum, result.totalPaybackCents);
+});
+
+test("validateHelocCalculationInput rejects a non-standard term and negative APR", () => {
+  const errors = validateHelocCalculationInput({ fundedAmount: 100000, aprPercent: -1, termYears: 25 });
+  assert.ok(errors.some((e) => e.field === "aprPercent"));
+  assert.ok(errors.some((e) => e.field === "termYears"));
+});
+
+test("validateHelocCalculationInput accepts every supported term length", () => {
+  for (const termYears of [10, 15, 20, 30]) {
+    assert.deepEqual(validateHelocCalculationInput({ fundedAmount: 100000, aprPercent: 6, termYears }), []);
+  }
+});
+
+test("calculateAnyDeal dispatches to HELOC math for dealType 'heloc'", () => {
+  const result = calculateAnyDeal({
+    dealType: "heloc",
+    fundedAmount: 100_000,
+    aprPercent: 6,
+    termYears: 15,
+    // MCA-only fields are irrelevant for HELOC but still required by the shared input type.
+    factorRate: 1,
+    termValue: 0,
+    paymentFrequency: "monthly",
+    syndicationPercent: 0,
+  });
+  assert.equal(result.periods, 180);
+  assert.equal(result.termUnit, "months");
+});
+
+test("calculateAnyDeal dispatches to factor-rate math for mca/renewal/addon", () => {
+  const input = {
+    fundedAmount: 50_000,
+    factorRate: 1.4,
+    termValue: 20,
+    paymentFrequency: "weekly" as const,
+    syndicationPercent: 0,
+  };
+  for (const dealType of ["mca", "renewal", "addon"] as const) {
+    const result = calculateAnyDeal({ ...input, dealType });
+    assert.equal(result.totalPaybackDollars, 70_000);
+  }
 });

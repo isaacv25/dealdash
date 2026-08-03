@@ -22,6 +22,8 @@ DealDash is a production-shaped MCA operating system that now combines:
 - Company-owned Postgres persistence for funded deals, pipeline, follow-ups, and import history
 - Dashboard metrics and charts
 - Funded progress tracking on expandable deal cards, with progress bars driven by actual cron-posted schedule payments (auto-updating as a deal is paid), decimal-friendly numeric inputs, manual balance overrides, and commission payout status
+- Four deal types (MCA, HELOC, Renewal, Add-on) -- HELOC prices on Amount/APR/Term-years; Renewal/Add-on link back to an original MCA deal to trace a client's history -- plus a per-deal PSF $ fee tallied into a Total Payout alongside commission
+- Payment schedules generate automatically once a deal has valid terms (no manual "Recalculate schedule" click needed), skip the 11 US federal holidays as well as weekends, start the day after funding (a full week out for weekly deals), and renewal is marketed at 50% of term
 - Pipeline board with editable statuses and dates
 - Follow-up sheet with completion and submission tracking
 - Rate calculator for funded amount, factor rate, fees, term, ISO points, rep points, syndication, and bonus -- output (net funded amount, total payback, payment amount, rep profit) is always visible
