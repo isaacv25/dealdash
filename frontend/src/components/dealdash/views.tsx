@@ -19,7 +19,7 @@ import {
   renewalDateForFundedDeal,
 } from "@/lib/dealdash";
 import type { FollowUpItem, FundedDeal, FundedTag, PipelineStage } from "@/lib/dealdash";
-import { CalendarClock, Copy, Download, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, ChevronDown, Copy, Download, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useDealdash } from "./state";
 import { formatCurrency, formatDate, dateInputToIso, toDateInput } from "@/lib/dealdash/format";
 import { MAX_SYNDICATION_PERCENT, MIN_SYNDICATION_PERCENT, normalizeSyndicationPercent, termUnitForFrequency } from "@/lib/dealdash/finance";
@@ -508,7 +508,8 @@ function DealField({
 }
 
 export function FundedProgressView() {
-  const { data, addFundedDeal, updateFundedDeal, deleteFundedDeal } = useDealdash();
+  // update/delete now live inside FundedDealCard; this view only adds deals and reads the list.
+  const { data, addFundedDeal } = useDealdash();
   const [query, setQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState("all");
   const [newFundedDate, setNewFundedDate] = useState(todayDateInput());
@@ -557,26 +558,6 @@ export function FundedProgressView() {
       if (next.has(tag)) next.delete(tag);
       else next.add(tag);
       return next;
-    });
-  }
-
-  /** When house points % or broker split % changes, auto-calc commission $. */
-  function updateWithCommissionCalc(
-    id: string,
-    patch: Partial<FundedDeal>,
-    deal: FundedDeal,
-  ) {
-    const nextDeal = { ...deal, ...patch };
-    const houseAmt = nextDeal.fundedAmount * nextDeal.housePointsPercent;
-    const calcComm = houseAmt * nextDeal.commissionPercent;
-    // Only auto-update commissionAmount if we're changing a rate field (not the $ directly)
-    const shouldRecalc =
-      "housePointsPercent" in patch ||
-      "commissionPercent" in patch ||
-      "fundedAmount" in patch;
-    updateFundedDeal(id, {
-      ...patch,
-      ...(shouldRecalc && nextDeal.housePointsPercent > 0 ? { commissionAmount: calcComm } : {}),
     });
   }
 
@@ -697,317 +678,345 @@ export function FundedProgressView() {
         {filteredDeals.length === 0 && (
           <p className="py-10 text-center text-sm text-[var(--muted)]">No funded deals match your search.</p>
         )}
-        {filteredDeals.map((deal) => {
-          const tags = tagsForFundedDeal(deal);
-          const progress = progressForFundedDeal(deal);
-          const renewalDate = renewalDateForFundedDeal(deal);
-          const houseAmt = deal.fundedAmount * deal.housePointsPercent;
-          const payback = grossPaybackFromDeal(deal);
-          const balance = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining ?? progress.balanceRemaining;
-
-          return (
-            <article
-              key={deal.id}
-              className={`overflow-hidden rounded-[1.75rem] border shadow-[0_8px_32px_rgba(21,42,74,0.07)] ${fundedTintClass(tags)}`}
-            >
-              {/* ── Card header ── */}
-              <div className="flex items-start justify-between gap-4 px-5 pt-5">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <StatusBadge stage={deal.statusStage} />
-                    <CommissionBadge status={deal.commissionStatus} />
-                    {tags.map((tag) => (
-                      <span key={tag} className={`pill text-xs ${tagBadgeClass(tag)}`}>
-                        {fundedTagOptions.find((option) => option.key === tag)?.label ?? tag}
-                      </span>
-                    ))}
-                    <input
-                      className="field flex-1 min-w-[200px] text-base font-semibold"
-                      value={deal.businessName}
-                      onChange={(e) => updateFundedDeal(deal.id, { businessName: e.target.value })}
-                      placeholder="Business name"
-                    />
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
-                    <input
-                      className="field min-w-[140px] text-sm"
-                      value={deal.contactName}
-                      onChange={(e) => updateFundedDeal(deal.id, { contactName: e.target.value })}
-                      placeholder="Contact name"
-                    />
-                    <input
-                      className="field min-w-[160px] text-sm"
-                      value={deal.funder || ""}
-                      onChange={(e) => updateFundedDeal(deal.id, { funder: e.target.value })}
-                      placeholder="Funder"
-                    />
-                    {deal.fundedDate && (
-                      <span className="text-xs">{formatDate(deal.fundedDate)}</span>
-                    )}
-                    {deal.phone && <span className="text-xs">{deal.phone}</span>}
-                  </div>
-                </div>
-                <button
-                  className="delete-button shrink-0 mt-1"
-                  onClick={() => {
-                    if (confirm(`Move ${deal.businessName || "this funded deal"} to Trash? You can restore it for 30 days.`)) {
-                      deleteFundedDeal(deal.id);
-                    }
-                  }}
-                  title="Delete deal"
-                  type="button"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              {/* ── Progress bar ── */}
-              <div className="px-5 pt-4">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wide">
-                    Payback Progress
-                  </span>
-                  <span className="text-xs text-[var(--muted)]">
-                    {`${formatCurrency(balance)} remaining of ${formatCurrency(payback > 0 ? payback : deal.fundedAmount)}`}
-                  </span>
-                </div>
-                <div className="progress-track" style={{ height: "10px" }}>
-                  <div
-                    className={`progress-fill h-full ${
-                      deal.statusStage === "paid-out" ? "bg-[var(--success)]"
-                      : deal.statusStage === "clawback" ? "bg-[var(--danger)]"
-                      : deal.statusStage === "slow-pay" ? "bg-[var(--warn)]"
-                      : "bg-[var(--accent-strong)]"
-                    }`}
-                    style={{ width: `${Math.min(100, progress.progressPercent)}%` }}
-                  />
-                </div>
-                <p className="mt-1 text-xs text-[var(--muted)]">
-                  {progress.totalPeriods > 0
-                    ? `${progress.completedPeriods} of ${progress.totalPeriods} payments complete - ${progress.paymentsRemaining} remaining`
-                    : `${progress.progressPercent}% paid`}
-                </p>
-              </div>
-
-              {/* ── Deal economics ── */}
-              <div className="px-5 pt-4">
-                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                  Deal Economics
-                </p>
-                <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
-                  <DealField label="Funded $">
-                    <input
-                      className="field w-full text-sm font-semibold"
-                      type="number"
-                      value={deal.fundedAmount || ""}
-                      onChange={(e) =>
-                        updateWithCommissionCalc(deal.id, { fundedAmount: Number(e.target.value) || 0 }, deal)
-                      }
-                      placeholder="0"
-                    />
-                  </DealField>
-                  <DealField label="Factor Rate">
-                    <input
-                      className="field w-full text-sm"
-                      step="0.01"
-                      type="number"
-                      value={deal.factorRate || ""}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { factorRate: Number(e.target.value) || 0 })
-                      }
-                      placeholder="1.35"
-                    />
-                  </DealField>
-                  <DealField label="Frequency">
-                    <select
-                      className="field w-full text-sm"
-                      value={deal.paymentFrequency}
-                      onChange={(e) => {
-                        const frequency = e.target.value as FundedDeal["paymentFrequency"];
-                        // Term unit always tracks payment frequency so a mismatched pair (e.g.
-                        // "weekly" payments over a "months" term) can never be saved.
-                        updateFundedDeal(deal.id, { paymentFrequency: frequency, termUnit: termUnitForFrequency(frequency) });
-                      }}
-                    >
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="monthly">Monthly</option>
-                    </select>
-                  </DealField>
-                  <DealField label={`Term (${termUnitForFrequency(deal.paymentFrequency)})`}>
-                    <input
-                      className="field w-full text-sm"
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={deal.termValue || ""}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { termValue: Math.max(0, Math.trunc(Number(e.target.value) || 0)) })
-                      }
-                      placeholder="0"
-                    />
-                  </DealField>
-                  <DealField label="Payment $">
-                    <input
-                      className="field w-full text-sm"
-                      type="number"
-                      value={deal.paymentAmount || ""}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { paymentAmount: Number(e.target.value) || 0 })
-                      }
-                      placeholder="0"
-                    />
-                  </DealField>
-                </div>
-              </div>
-
-              {/* ── Commission model ── */}
-              <div className="px-5 pt-4">
-                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                  Commission Model
-                </p>
-                <div className="grid gap-3 grid-cols-2 sm:grid-cols-5">
-                  <DealField label="House Pts %">
-                    <input
-                      className="field w-full text-sm"
-                      step="0.1"
-                      type="number"
-                      value={deal.housePointsPercent > 0 ? (deal.housePointsPercent * 100).toFixed(1) : ""}
-                      onChange={(e) =>
-                        updateWithCommissionCalc(deal.id, { housePointsPercent: (Number(e.target.value) || 0) / 100 }, deal)
-                      }
-                      placeholder="e.g. 9"
-                    />
-                  </DealField>
-                  <DealField label={`House Pts $ ${houseAmt > 0 ? `(${formatCurrency(houseAmt)})` : ""}`}>
-                    <div className="field w-full flex items-center text-sm font-semibold bg-[var(--accent-soft)] border-[var(--accent-strong)]/20 text-[var(--accent-strong)]">
-                      {houseAmt > 0 ? formatCurrency(houseAmt) : <span className="text-[var(--muted)] font-normal">Set house pts %</span>}
-                    </div>
-                  </DealField>
-                  <DealField label="Broker Split %">
-                    <input
-                      className="field w-full text-sm"
-                      step="1"
-                      type="number"
-                      value={deal.commissionPercent > 0 ? (deal.commissionPercent * 100).toFixed(0) : ""}
-                      onChange={(e) =>
-                        updateWithCommissionCalc(deal.id, { commissionPercent: (Number(e.target.value) || 0) / 100 }, deal)
-                      }
-                      placeholder="e.g. 30"
-                    />
-                  </DealField>
-                  <DealField label="Commission $">
-                    <input
-                      className="field w-full text-sm font-semibold"
-                      type="number"
-                      value={deal.commissionAmount || ""}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { commissionAmount: Number(e.target.value) || 0 })
-                      }
-                      placeholder="0"
-                    />
-                  </DealField>
-                </div>
-              </div>
-
-              {/* ── Other fields ── */}
-              <div className="px-5 pt-4 pb-5">
-                <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                  Additional
-                </p>
-                <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-                  <DealField label="Funded Date">
-                    <input
-                      className="field w-full text-sm"
-                      type="date"
-                      value={toDateInput(deal.fundedDate)}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, {
-                          fundedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined,
-                        })
-                      }
-                    />
-                  </DealField>
-                  <DealField label="Synd %">
-                    <DecimalField
-                      value={deal.syndicationPercent * 100}
-                      onCommit={(next) => updateFundedDeal(deal.id, { syndicationPercent: normalizeSyndicationPercent(next) })}
-                      suffix="%"
-                      min={MIN_SYNDICATION_PERCENT}
-                      max={MAX_SYNDICATION_PERCENT}
-                      placeholder="0"
-                      ariaLabel={`Syndication percent for ${deal.businessName || "deal"}`}
-                    />
-                  </DealField>
-                  <DealField label="Renewal Date">
-                    <input
-                      className="field w-full text-sm"
-                      type="date"
-                      value={toDateInput(renewalDate)}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, {
-                          manualRenewalDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined,
-                        })
-                      }
-                    />
-                  </DealField>
-                  <DealField label="Commission Status">
-                    <select
-                      className="field w-full text-sm"
-                      value={deal.commissionStatus}
-                      onChange={(e) =>
-                        updateFundedDeal(deal.id, { commissionStatus: e.target.value as FundedDeal["commissionStatus"] })
-                      }
-                    >
-                      <option value="pending">Pending</option>
-                      <option value="paid-out">Paid Out</option>
-                      <option value="clawback">Clawback</option>
-                    </select>
-                  </DealField>
-                  <DealField label="Notes">
-                    <input
-                      className="field w-full text-sm"
-                      value={deal.notes}
-                      onChange={(e) => updateFundedDeal(deal.id, { notes: e.target.value })}
-                      placeholder="Notes..."
-                    />
-                  </DealField>
-                  <div className="col-span-2 flex flex-col gap-2 sm:col-span-4">
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted)]">
-                      Tags
-                    </span>
-                    <div className="flex flex-wrap gap-2">
-                      {fundedTagOptions.map((tag) => {
-                        const persistedTags = deal.fundedTags || [];
-                        const selected = persistedTags.includes(tag.key);
-                        return (
-                          <button
-                            key={tag.key}
-                            className={`pill transition ${
-                              selected ? tagBadgeClass(tag.key) : "bg-white/72 text-[var(--muted)] hover:bg-white"
-                            }`}
-                            onClick={() =>
-                              updateFundedDeal(deal.id, {
-                                fundedTags: toggleFundedTag(persistedTags, tag.key),
-                              })
-                            }
-                            type="button"
-                          >
-                            {tag.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <FundedDealAdvancedPanel deal={deal} />
-            </article>
-          );
-        })}
+        {filteredDeals.map((deal, index) => (
+          <FundedDealCard key={deal.id} deal={deal} index={index} />
+        ))}
       </div>
     </SectionFrame>
+  );
+}
+
+/**
+ * A single funded deal. Collapsed by default it shows an at-a-glance summary (badges, name, funder,
+ * funded amount, remaining balance) plus the always-visible payback progress bar; clicking the
+ * header expands the full inline editor and the advanced servicing panel with a smooth height
+ * animation. All numeric fields use DecimalField (a free-typing text box) rather than a spinner
+ * <input type="number">, so values like 7.45 or 10.4 can be typed directly without the control
+ * reformatting mid-keystroke.
+ */
+function FundedDealCard({ deal, index }: { deal: FundedDeal; index: number }) {
+  const { updateFundedDeal, deleteFundedDeal } = useDealdash();
+  const [open, setOpen] = useState(false);
+  // Detail (inputs + advanced servicing panel) stays unmounted until first expanded so a board of
+  // many deals doesn't mount every editor and schedule panel up front, and collapsed cards don't
+  // leave hidden-but-tabbable form controls in the tab order.
+  const [everOpened, setEverOpened] = useState(false);
+
+  const tags = tagsForFundedDeal(deal);
+  const progress = progressForFundedDeal(deal);
+  const renewalDate = renewalDateForFundedDeal(deal);
+  const houseAmt = deal.fundedAmount * deal.housePointsPercent;
+  const payback = grossPaybackFromDeal(deal);
+  const balance = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining ?? progress.balanceRemaining;
+
+  /** When funded amount, house points %, or broker split % changes, auto-calc commission $. */
+  function updateWithCommissionCalc(patch: Partial<FundedDeal>) {
+    const nextDeal = { ...deal, ...patch };
+    const calcComm = nextDeal.fundedAmount * nextDeal.housePointsPercent * nextDeal.commissionPercent;
+    const shouldRecalc = "housePointsPercent" in patch || "commissionPercent" in patch || "fundedAmount" in patch;
+    updateFundedDeal(deal.id, {
+      ...patch,
+      ...(shouldRecalc && nextDeal.housePointsPercent > 0 ? { commissionAmount: calcComm } : {}),
+    });
+  }
+
+  const progressFillClass =
+    deal.statusStage === "paid-out" ? "bg-[var(--success)]"
+    : deal.statusStage === "clawback" ? "bg-[var(--danger)]"
+    : deal.statusStage === "slow-pay" ? "bg-[var(--warn)]"
+    : "bg-[var(--accent-strong)]";
+
+  return (
+    <article
+      className={`dd-rise dd-hover-lift overflow-hidden rounded-[1.75rem] border shadow-[0_8px_32px_rgba(21,42,74,0.07)] ${fundedTintClass(tags)}`}
+      // Stagger the entrance a touch per row (capped) so the list cascades in instead of popping.
+      style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
+    >
+      {/* ── Summary header (click to expand) ── */}
+      <div className="flex items-start gap-3 px-5 pt-5">
+        <button
+          type="button"
+          className="flex flex-1 min-w-0 items-start gap-3 text-left"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen((prev) => !prev);
+            setEverOpened(true);
+          }}
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge stage={deal.statusStage} />
+              <CommissionBadge status={deal.commissionStatus} />
+              {tags.map((tag) => (
+                <span key={tag} className={`pill text-xs ${tagBadgeClass(tag)}`}>
+                  {fundedTagOptions.find((option) => option.key === tag)?.label ?? tag}
+                </span>
+              ))}
+            </div>
+            <p className="mt-2 truncate text-base font-semibold">{deal.businessName || "Untitled deal"}</p>
+            <p className="mt-0.5 truncate text-sm text-[var(--muted)]">
+              {[deal.contactName, deal.funder, deal.fundedDate ? formatDate(deal.fundedDate) : null]
+                .filter(Boolean)
+                .join(" · ") || "No contact details yet"}
+            </p>
+          </div>
+          <div className="shrink-0 text-right">
+            <p className="text-base font-semibold">{formatCurrency(deal.fundedAmount)}</p>
+            <p className="text-xs text-[var(--muted)]">{formatCurrency(balance)} left</p>
+          </div>
+          <ChevronDown className="dd-chevron mt-1 h-5 w-5 shrink-0 text-[var(--muted)]" data-open={open} />
+        </button>
+        <button
+          className="delete-button mt-1 shrink-0"
+          onClick={() => {
+            if (confirm(`Move ${deal.businessName || "this funded deal"} to Trash? You can restore it for 30 days.`)) {
+              deleteFundedDeal(deal.id);
+            }
+          }}
+          title="Delete deal"
+          type="button"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* ── Payback progress (always visible) ── */}
+      <div className="px-5 pt-4 pb-5">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Payback Progress</span>
+          <span className="text-xs text-[var(--muted)]">
+            {`${formatCurrency(balance)} remaining of ${formatCurrency(payback > 0 ? payback : deal.fundedAmount)}`}
+          </span>
+        </div>
+        <div className="progress-track" style={{ height: "10px" }}>
+          <div className={`progress-fill h-full ${progressFillClass}`} style={{ width: `${Math.min(100, progress.progressPercent)}%` }} />
+        </div>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          {progress.totalPeriods > 0
+            ? `${progress.completedPeriods} of ${progress.totalPeriods} payments complete - ${progress.paymentsRemaining} remaining`
+            : `${progress.progressPercent}% paid`}
+        </p>
+      </div>
+
+      {/* ── Expandable detail (lazy-mounted on first open) ── */}
+      <div className="dd-collapse" data-open={open}>
+        <div className="dd-collapse-inner">
+          {everOpened && (
+          <>
+          <div className="border-t border-[var(--line)] px-5 pt-4">
+            {/* Identity (editable) */}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <DealField label="Business Name">
+                <input
+                  className="field w-full text-sm font-semibold"
+                  value={deal.businessName}
+                  onChange={(e) => updateFundedDeal(deal.id, { businessName: e.target.value })}
+                  placeholder="Business name"
+                />
+              </DealField>
+              <DealField label="Contact Name">
+                <input
+                  className="field w-full text-sm"
+                  value={deal.contactName}
+                  onChange={(e) => updateFundedDeal(deal.id, { contactName: e.target.value })}
+                  placeholder="Contact name"
+                />
+              </DealField>
+              <DealField label="Funder">
+                <input
+                  className="field w-full text-sm"
+                  value={deal.funder || ""}
+                  onChange={(e) => updateFundedDeal(deal.id, { funder: e.target.value })}
+                  placeholder="Funder"
+                />
+              </DealField>
+            </div>
+          </div>
+
+          {/* Deal economics */}
+          <div className="px-5 pt-4">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Deal Economics</p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              <DealField label="Funded $">
+                <DecimalField
+                  value={deal.fundedAmount}
+                  onCommit={(next) => updateWithCommissionCalc({ fundedAmount: next })}
+                  suffix="$"
+                  min={0}
+                  placeholder="0"
+                  ariaLabel={`Funded amount for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+              <DealField label="Factor Rate">
+                <DecimalField
+                  value={deal.factorRate}
+                  onCommit={(next) => updateFundedDeal(deal.id, { factorRate: next })}
+                  min={0}
+                  decimals={4}
+                  placeholder="1.35"
+                  ariaLabel={`Factor rate for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+              <DealField label="Frequency">
+                <select
+                  className="field w-full text-sm"
+                  value={deal.paymentFrequency}
+                  onChange={(e) => {
+                    const frequency = e.target.value as FundedDeal["paymentFrequency"];
+                    // Term unit always tracks payment frequency so a mismatched pair (e.g. "weekly"
+                    // payments over a "months" term) can never be saved.
+                    updateFundedDeal(deal.id, { paymentFrequency: frequency, termUnit: termUnitForFrequency(frequency) });
+                  }}
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </DealField>
+              <DealField label={`Term (${termUnitForFrequency(deal.paymentFrequency)})`}>
+                <input
+                  className="field w-full text-sm"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={deal.termValue || ""}
+                  onChange={(e) => updateFundedDeal(deal.id, { termValue: Math.max(0, Math.trunc(Number(e.target.value) || 0)) })}
+                  placeholder="0"
+                />
+              </DealField>
+              <DealField label="Payment $">
+                <DecimalField
+                  value={deal.paymentAmount}
+                  onCommit={(next) => updateFundedDeal(deal.id, { paymentAmount: next })}
+                  suffix="$"
+                  min={0}
+                  placeholder="0"
+                  ariaLabel={`Payment amount for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+            </div>
+          </div>
+
+          {/* Commission model */}
+          <div className="px-5 pt-4">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Commission Model</p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <DealField label="House Pts %">
+                <DecimalField
+                  value={deal.housePointsPercent * 100}
+                  onCommit={(next) => updateWithCommissionCalc({ housePointsPercent: next / 100 })}
+                  suffix="%"
+                  min={0}
+                  placeholder="e.g. 9"
+                  ariaLabel={`House points percent for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+              <DealField label={`House Pts $ ${houseAmt > 0 ? `(${formatCurrency(houseAmt)})` : ""}`}>
+                <div className="field flex w-full items-center border-[var(--accent-strong)]/20 bg-[var(--accent-soft)] text-sm font-semibold text-[var(--accent-strong)]">
+                  {houseAmt > 0 ? formatCurrency(houseAmt) : <span className="font-normal text-[var(--muted)]">Set house pts %</span>}
+                </div>
+              </DealField>
+              <DealField label="Broker Split %">
+                <DecimalField
+                  value={deal.commissionPercent * 100}
+                  onCommit={(next) => updateWithCommissionCalc({ commissionPercent: next / 100 })}
+                  suffix="%"
+                  min={0}
+                  placeholder="e.g. 30"
+                  ariaLabel={`Broker split percent for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+              <DealField label="Commission $">
+                <DecimalField
+                  value={deal.commissionAmount}
+                  onCommit={(next) => updateFundedDeal(deal.id, { commissionAmount: next })}
+                  suffix="$"
+                  min={0}
+                  placeholder="0"
+                  ariaLabel={`Commission amount for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+            </div>
+          </div>
+
+          {/* Additional */}
+          <div className="px-5 pt-4 pb-5">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Additional</p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <DealField label="Funded Date">
+                <input
+                  className="field w-full text-sm"
+                  type="date"
+                  value={toDateInput(deal.fundedDate)}
+                  onChange={(e) => updateFundedDeal(deal.id, { fundedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
+                />
+              </DealField>
+              <DealField label="Synd %">
+                <DecimalField
+                  value={deal.syndicationPercent * 100}
+                  onCommit={(next) => updateFundedDeal(deal.id, { syndicationPercent: normalizeSyndicationPercent(next) })}
+                  suffix="%"
+                  min={MIN_SYNDICATION_PERCENT}
+                  max={MAX_SYNDICATION_PERCENT}
+                  placeholder="0"
+                  ariaLabel={`Syndication percent for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+              <DealField label="Renewal Date">
+                <input
+                  className="field w-full text-sm"
+                  type="date"
+                  value={toDateInput(renewalDate)}
+                  onChange={(e) => updateFundedDeal(deal.id, { manualRenewalDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
+                />
+              </DealField>
+              <DealField label="Commission Status">
+                <select
+                  className="field w-full text-sm"
+                  value={deal.commissionStatus}
+                  onChange={(e) => updateFundedDeal(deal.id, { commissionStatus: e.target.value as FundedDeal["commissionStatus"] })}
+                >
+                  <option value="pending">Pending</option>
+                  <option value="paid-out">Paid Out</option>
+                  <option value="clawback">Clawback</option>
+                </select>
+              </DealField>
+              <DealField label="Notes">
+                <input
+                  className="field w-full text-sm"
+                  value={deal.notes}
+                  onChange={(e) => updateFundedDeal(deal.id, { notes: e.target.value })}
+                  placeholder="Notes..."
+                />
+              </DealField>
+              <div className="col-span-2 flex flex-col gap-2 sm:col-span-4">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted)]">Tags</span>
+                <div className="flex flex-wrap gap-2">
+                  {fundedTagOptions.map((tag) => {
+                    const persistedTags = deal.fundedTags || [];
+                    const selected = persistedTags.includes(tag.key);
+                    return (
+                      <button
+                        key={tag.key}
+                        className={`pill transition ${selected ? tagBadgeClass(tag.key) : "bg-white/72 text-[var(--muted)] hover:bg-white"}`}
+                        onClick={() => updateFundedDeal(deal.id, { fundedTags: toggleFundedTag(persistedTags, tag.key) })}
+                        type="button"
+                      >
+                        {tag.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <FundedDealAdvancedPanel deal={deal} />
+          </>
+          )}
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -1144,10 +1153,11 @@ export function PipelineView() {
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {stageDeals.map((deal) => (
+                  {stageDeals.map((deal, cardIndex) => (
                     <article
                       key={deal.id}
-                      className="rounded-[1.25rem] border border-[var(--line)] bg-white p-3"
+                      className="dd-rise rounded-[1.25rem] border border-[var(--line)] bg-white p-3"
+                      style={{ animationDelay: `${Math.min(cardIndex, 10) * 35}ms` }}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
@@ -1327,10 +1337,11 @@ export function FollowUpsView() {
           <span>Notes</span>
           <span />
         </div>
-        {filtered.map((item) => (
+        {filtered.map((item, rowIndex) => (
           <article
             key={item.id}
-            className="grid gap-3 rounded-[1.1rem] border border-white/80 bg-white/78 p-3 shadow-[0_8px_26px_rgba(21,42,74,0.06)] lg:grid-cols-[1.1fr_1fr_0.9fr_130px_100px_minmax(260px,1.4fr)_44px] lg:items-start"
+            className="dd-rise grid gap-3 rounded-[1.1rem] border border-white/80 bg-white/78 p-3 shadow-[0_8px_26px_rgba(21,42,74,0.06)] lg:grid-cols-[1.1fr_1fr_0.9fr_130px_100px_minmax(260px,1.4fr)_44px] lg:items-start"
+            style={{ animationDelay: `${Math.min(rowIndex, 12) * 30}ms` }}
           >
             <div className="grid gap-2">
               <input

@@ -69,6 +69,27 @@ DealDash is now multi-tenant at the company level.
 - `scheduleCompletedAt` (set once the persisted schedule's balance reaches zero)
 - `balanceOverrideCents`, `balanceOverrideEffectiveDate`, `balanceOverrideReason`, `balanceOverrideSetByUserId`, `balanceOverrideSetAt`
 
+The serialized `FundedDeal` the client receives also carries three read-only, loader-computed fields
+that are not stored columns: `scheduledPaymentsCount`, `postedPaymentsCount`, and `postedAmount`.
+`loadWorkspace` derives these once per page load by grouping the company's `PaymentScheduleEntry`
+rows, so the funded board can show *actual* cron-posted repayment progress per deal without a
+per-card query. They are undefined for deals with no generated schedule.
+
+### Repayment progress priority
+
+`progressForFundedDeal` (in `calculations.ts`) resolves a deal's progress bar / remaining balance in
+this strict order, each step winning over the ones below it:
+
+1. `scheduleCompletedAt` set -> 100% paid, $0 remaining (cron ground truth).
+2. A manual balance override (`balanceOverrideAmount`, or legacy `manualBalanceRemaining`) -> that
+   number is authoritative.
+3. A persisted schedule exists (`scheduledPaymentsCount > 0`) -> progress is driven by the actual
+   posted payments (`postedPaymentsCount` / `postedAmount`). This is what makes the board update as
+   the deal is paid: each cron posting advances the bar for real, and the figures can never drift
+   from the schedule the way the estimate can.
+4. Otherwise -> the elapsed-time estimate (funded date + cadence + periodic payment), the
+   conservative fallback for deals that have no generated schedule yet.
+
 `fundedTags` stores manually selected operational tags. The UI can also infer display tags from status, commission state, progress math, notes, and renewal timing. Clawback styling takes priority over paid-in-full, and paid-in-full takes priority over active.
 
 ## Calculation formulas (`frontend/src/lib/dealdash/finance.ts`)
@@ -122,12 +143,21 @@ The user selects a payment weekday (Monday-Friday exposed in the UI; the schema 
 date, then steps forward 7 days per payment. Changing the weekday recasts only the still-pending
 tail of the schedule (see "Recast vs. rebuild" below) -- posted history keeps its original dates.
 
+### First payment anchor
+
+Collection never starts on the funding day itself. `firstPaymentAnchor` (in `schedule.ts`) anchors a
+brand-new schedule to the day *after* `fundedDate`, unless the deal carries an explicit
+`firstPaymentDate`, which always wins. So a deal funded Monday has its first daily payment Tuesday,
+and a weekly deal's first payment lands on the chosen weekday on or after that next day (~a week
+out). Only the initial schedule uses this anchor; a recast anchors from its effective date instead,
+since a recast is always "from here forward" on an already-running deal.
+
 ### Daily schedules
 
 "Daily" means business days (Monday-Friday). `datesForDaily` skips Saturday/Sunday; there is no
 holiday calendar, so a bank holiday still generates a due date on that weekday (documented limitation
--- see the final report). If an anchor date itself falls on a weekend, the first payment rolls
-forward to the next business day.
+-- see the final report). Combined with the anchor rule above, a deal funded Friday has its first
+daily payment the following Monday (Saturday anchor rolls forward to the next business day).
 
 ### Recast vs. rebuild
 

@@ -21,7 +21,7 @@ DealDash is a production-shaped MCA operating system that now combines:
 - Username/password signup and login
 - Company-owned Postgres persistence for funded deals, pipeline, follow-ups, and import history
 - Dashboard metrics and charts
-- Funded progress tracking with manual balance overrides and commission payout status
+- Funded progress tracking on expandable deal cards, with progress bars driven by actual cron-posted schedule payments (auto-updating as a deal is paid), decimal-friendly numeric inputs, manual balance overrides, and commission payout status
 - Pipeline board with editable statuses and dates
 - Follow-up sheet with completion and submission tracking
 - Rate calculator for funded amount, factor rate, fees, term, ISO points, rep points, syndication, and bonus -- output (net funded amount, total payback, payment amount, rep profit) is always visible

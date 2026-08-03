@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { FundedDeal as DealRow, PaymentScheduleEntry as EntryRow } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { calculateDeal, centsToDollars, dollarsToCents, validateDealCalculationInput } from "./finance";
-import { applyLoweredPayment, applyPause, buildSchedule, recastSchedule, type ScheduleEntry } from "./schedule";
+import { applyLoweredPayment, applyPause, buildSchedule, firstPaymentAnchor, recastSchedule, type ScheduleEntry } from "./schedule";
 import { isDueInEastern } from "./timezone";
 import type { PaymentFrequency } from "./types";
 
@@ -79,8 +79,12 @@ export async function generateInitialSchedule(dealId: string, context: DealAudit
     const calc = calculateDeal(calcInput);
     if (calc.periods <= 0 || calc.totalPaybackCents <= 0) return [];
 
-    const anchor = deal.firstPaymentDate ?? deal.fundedDate ?? new Date();
-    const weekday = deal.paymentFrequency === "weekly" ? (deal.paymentWeekday ?? anchor.getUTCDay()) : null;
+    // Collection starts the day after funding, never the funding day itself (see firstPaymentAnchor).
+    // The default weekday for weekly deals is derived from the funding day so an unspecified weekday
+    // still lands the first payment ~a week out rather than on an arbitrary day.
+    const fundedOrNow = deal.fundedDate ?? new Date();
+    const anchor = firstPaymentAnchor(fundedOrNow, deal.firstPaymentDate);
+    const weekday = deal.paymentFrequency === "weekly" ? (deal.paymentWeekday ?? fundedOrNow.getUTCDay()) : null;
 
     const entries = buildSchedule({
       anchorDate: anchor,
