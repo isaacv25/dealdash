@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { progressForFundedDeal, psfPayout, renewalDateForFundedDeal, totalPayoutForFundedDeal } from "../calculations.ts";
+import { expectedEndDateForFundedDeal, progressForFundedDeal, psfPayout, renewalDateForFundedDeal, totalPayoutForFundedDeal } from "../calculations.ts";
 import type { FundedDeal } from "../types.ts";
 
 // Minimal funded-deal fixture: $50k at 1.4 over 20 weekly payments = $70,000 total payback,
@@ -107,4 +107,23 @@ test("total payout is commission plus PSF payout, not PSF alone", () => {
 test("a negative commission percent never turns PSF payout negative", () => {
   const result = psfPayout(deal({ psfAmount: 1000, commissionPercent: -0.5 }));
   assert.equal(result, 0);
+});
+
+// ── Expected end date ────────────────────────────────────────────────────────
+
+test("expected end date returns the persisted scheduleEndDate verbatim when present", () => {
+  const result = expectedEndDateForFundedDeal(deal({ scheduleEndDate: "2027-03-15T00:00:00.000Z" }));
+  assert.equal(result, "2027-03-15T00:00:00.000Z");
+});
+
+test("expected end date estimates from terms when no schedule exists yet", () => {
+  // Weekly deal funded Thursday 2026-01-01, 20 payments. First payment is a full week out
+  // (2026-01-08, a Thursday); the 20th weekly payment lands 19 weeks later = 2026-05-21.
+  const result = expectedEndDateForFundedDeal(deal({ fundedDate: "2026-01-01T00:00:00.000Z", termUnit: "weeks", termValue: 20, paymentFrequency: "weekly" }));
+  assert.equal(result, "2026-05-21T00:00:00.000Z");
+});
+
+test("expected end date is undefined without a funded date or without a term", () => {
+  assert.equal(expectedEndDateForFundedDeal(deal({ fundedDate: undefined, termValue: 20 })), undefined);
+  assert.equal(expectedEndDateForFundedDeal(deal({ fundedDate: "2026-01-01T00:00:00.000Z", termValue: 0 })), undefined);
 });

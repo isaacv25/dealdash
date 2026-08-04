@@ -80,6 +80,12 @@ that are not stored columns: `scheduledPaymentsCount`, `postedPaymentsCount`, `p
 can show *actual* cron-posted repayment progress and a real end date per deal without a per-card
 query. They are undefined for deals with no generated schedule.
 
+`expectedEndDateForFundedDeal` (`calculations.ts`) is the display helper for a deal's maturity date:
+it returns `scheduleEndDate` when a schedule exists, and otherwise re-runs the schedule generator's
+own `firstPaymentAnchor` + `scheduleEndDate` date math to project the same final-payment date the
+schedule *would* produce -- so every funded deal can show an expected end date whether or not a
+schedule has been generated yet.
+
 ## Deal types
 
 `FundedDealType` (`frontend/prisma/schema.prisma`): `mca` | `heloc` | `renewal` | `addon`.

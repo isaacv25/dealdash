@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import {
   calculateRateScenario,
+  expectedEndDateForFundedDeal,
   grossPaybackFromDeal,
   HELOC_TERM_YEARS,
   progressForFundedDeal,
@@ -21,10 +22,10 @@ import {
   renewalDateForFundedDeal,
   totalPayoutForFundedDeal,
 } from "@/lib/dealdash";
-import type { FollowUpItem, FundedDeal, FundedDealType, FundedTag, PipelineStage } from "@/lib/dealdash";
+import type { FollowUpItem, FundedDeal, FundedDealType, FundedTag, PipelineDeal, PipelineStage } from "@/lib/dealdash";
 import { CalendarClock, ChevronDown, Copy, Download, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useDealdash } from "./state";
-import { formatCurrency, formatDate, dateInputToIso, toDateInput } from "@/lib/dealdash/format";
+import { formatCurrency, formatCalendarDate, formatDate, dateInputToIso, toDateInput } from "@/lib/dealdash/format";
 import { MAX_SYNDICATION_PERCENT, MIN_SYNDICATION_PERCENT, normalizeSyndicationPercent, termUnitForFrequency } from "@/lib/dealdash/finance";
 import { DecimalField } from "./inputs";
 import { FundedDealAdvancedPanel } from "./funded-deal-panel";
@@ -45,6 +46,23 @@ const stages: Array<{ key: PipelineStage; label: string }> = [
   { key: "dead", label: "Dead" },
   { key: "renewal", label: "Renewal" },
 ];
+
+// A theme-consistent accent color per pipeline stage (reuses the app's CSS variables where possible)
+// so the redesigned board can dot/tint each lead by where it sits without introducing a new palette.
+const pipelineStageColor: Record<PipelineStage, string> = {
+  "new-lead": "var(--muted)",
+  submitted: "var(--accent-strong)",
+  "in-review": "var(--warn)",
+  approved: "var(--accent)",
+  "contract-out": "var(--accent-strong)",
+  funded: "var(--success)",
+  declined: "var(--danger)",
+  dead: "#475569",
+  renewal: "var(--accent)",
+};
+
+// Pipeline order used to cluster same-stage leads together in the single fluid grid.
+const stageOrder: Record<PipelineStage, number> = Object.fromEntries(stages.map((s, i) => [s.key, i] as const)) as Record<PipelineStage, number>;
 
 const fundedTagOptions: Array<{ key: FundedTag; label: string }> = [
   { key: "clawback", label: "Clawback" },
@@ -718,6 +736,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
   const tags = tagsForFundedDeal(deal);
   const progress = progressForFundedDeal(deal);
   const renewalDate = renewalDateForFundedDeal(deal);
+  const endDate = expectedEndDateForFundedDeal(deal);
   const houseAmt = deal.fundedAmount * deal.housePointsPercent;
   const payback = grossPaybackFromDeal(deal);
   const balance = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining ?? progress.balanceRemaining;
@@ -804,11 +823,19 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
         <div className="progress-track" style={{ height: "10px" }}>
           <div className={`progress-fill h-full ${progressFillClass}`} style={{ width: `${Math.min(100, progress.progressPercent)}%` }} />
         </div>
-        <p className="mt-1 text-xs text-[var(--muted)]">
-          {progress.totalPeriods > 0
-            ? `${progress.completedPeriods} of ${progress.totalPeriods} payments complete - ${progress.paymentsRemaining} remaining`
-            : `${progress.progressPercent}% paid`}
-        </p>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-[var(--muted)]">
+          <span>
+            {progress.totalPeriods > 0
+              ? `${progress.completedPeriods} of ${progress.totalPeriods} payments complete - ${progress.paymentsRemaining} remaining`
+              : `${progress.progressPercent}% paid`}
+          </span>
+          {endDate && (
+            <span className="inline-flex items-center gap-1 font-medium">
+              <CalendarClock className="h-3.5 w-3.5" />
+              {deal.scheduleEndDate ? "Ends" : "Est. end"} {formatCalendarDate(endDate)}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Expandable detail (lazy-mounted on first open) ── */}
@@ -1089,6 +1116,11 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                   onChange={(e) => updateFundedDeal(deal.id, { manualRenewalDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
                 />
               </DealField>
+              <DealField label={deal.scheduleEndDate ? "Expected End Date" : "Expected End Date (est.)"}>
+                <div className="field flex w-full items-center bg-white/60 text-sm text-[var(--foreground)]">
+                  {endDate ? formatCalendarDate(endDate) : <span className="text-[var(--muted)]">Set amount, rate & term</span>}
+                </div>
+              </DealField>
               <DealField label="Commission Status">
                 <select
                   className="field w-full text-sm"
@@ -1142,7 +1174,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 
 export function PipelineView() {
-  const { data, addPipelineDeal, updatePipelineDeal, deletePipelineDeal } = useDealdash();
+  const { data, addPipelineDeal } = useDealdash();
   const [query, setQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState("all");
   const [newPipelineDate, setNewPipelineDate] = useState(todayDateInput());
@@ -1153,47 +1185,60 @@ export function PipelineView() {
     [data.pipelineDeals],
   );
 
+  // Whole-board counts per stage (independent of the active filters) for the filter chips.
+  const stageCounts = useMemo(() => {
+    const counts = new Map<PipelineStage, number>();
+    for (const deal of data.pipelineDeals) counts.set(deal.stage, (counts.get(deal.stage) ?? 0) + 1);
+    return counts;
+  }, [data.pipelineDeals]);
+
   const filtered = useMemo(
     () =>
-      data.pipelineDeals.filter(
-        (deal) =>
-          (activeMonth === "all" || getMonthKey(deal.submittedDate) === activeMonth) &&
-          (activeStages.size === 0 || activeStages.has(deal.stage)) &&
-          [deal.businessName, deal.contactName, deal.statusRaw, deal.notes]
-            .join(" ")
-            .toLowerCase()
-            .includes(deferredQuery.toLowerCase()),
-      ),
+      data.pipelineDeals
+        .filter(
+          (deal) =>
+            (activeMonth === "all" || getMonthKey(deal.submittedDate) === activeMonth) &&
+            (activeStages.size === 0 || activeStages.has(deal.stage)) &&
+            [deal.businessName, deal.contactName, deal.statusRaw, deal.notes]
+              .join(" ")
+              .toLowerCase()
+              .includes(deferredQuery.toLowerCase()),
+        )
+        // One fluid grid instead of uneven per-stage columns: cluster same-stage leads together in
+        // pipeline order (newest first within a stage) so the board still reads as an ordered flow.
+        .sort((a, b) => {
+          const byStage = stageOrder[a.stage] - stageOrder[b.stage];
+          return byStage !== 0 ? byStage : (b.submittedDate ?? "").localeCompare(a.submittedDate ?? "");
+        }),
     [data.pipelineDeals, deferredQuery, activeStages, activeMonth],
   );
 
   function toggleStage(key: PipelineStage) {
     setActiveStages((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
+
+  const hasFilters = activeStages.size > 0 || activeMonth !== "all" || query.length > 0;
 
   return (
     <SectionFrame
       eyebrow="Deals Brought In"
       title="Pipeline board"
-      copy="Filter by stage, update status, and keep every file moving. All changes persist to your company workspace."
+      copy="Search, filter by stage, and keep every file moving. Changes save to your workspace automatically."
       actions={
         <div className="flex flex-wrap gap-3">
           <input
-            className="field min-w-[220px]"
+            className="field min-w-[200px]"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search pipeline"
           />
           <select
-            className="field max-h-64 min-w-[170px] text-sm"
+            className="field max-h-64 min-w-[150px] text-sm"
             value={activeMonth}
             onChange={(e) => setActiveMonth(e.target.value)}
           >
@@ -1205,16 +1250,16 @@ export function PipelineView() {
             ))}
           </select>
           <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-            Lead date
+            New lead date
             <input
-              className="field min-w-[150px] text-sm"
+              className="field min-w-[140px] text-sm"
               type="date"
               value={newPipelineDate}
               onChange={(e) => setNewPipelineDate(e.target.value)}
             />
           </label>
           <button
-            className="ghost-button flex items-center gap-2 text-sm"
+            className="primary-button flex items-center gap-2 text-sm"
             onClick={() => addPipelineDeal(dateInputToIso(newPipelineDate))}
             type="button"
           >
@@ -1224,26 +1269,37 @@ export function PipelineView() {
         </div>
       }
     >
-      {/* Stage filter chips */}
-      <div className="mb-4 flex flex-wrap gap-2">
-        <span className="self-center text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
-          Stage filters
-        </span>
-        {stages.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => toggleStage(s.key)}
-            type="button"
-            className={`pill cursor-pointer transition ${
-              activeStages.has(s.key)
-                ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                : "bg-white/70 text-[var(--muted)]"
-            }`}
-          >
-            {s.label} ({data.pipelineDeals.filter((d) => d.stage === s.key).length})
-          </button>
-        ))}
-        {(activeStages.size > 0 || activeMonth !== "all" || query) && (
+      {/* Filter bar -- a clean, dotted, colored stage rail with live counts (no clunky label). */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveStages(new Set())}
+          aria-pressed={activeStages.size === 0}
+          className={`pill cursor-pointer gap-1.5 transition ${
+            activeStages.size === 0 ? "bg-[var(--accent-strong)] text-white" : "bg-white/70 text-[var(--muted)] hover:bg-white"
+          }`}
+        >
+          All leads
+          <span className="opacity-70">{data.pipelineDeals.length}</span>
+        </button>
+        {stages.map((s) => {
+          const active = activeStages.has(s.key);
+          return (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => toggleStage(s.key)}
+              aria-pressed={active}
+              className={`pill cursor-pointer gap-1.5 transition ${active ? "text-white" : "bg-white/70 text-[var(--muted)] hover:bg-white"}`}
+              style={active ? { background: pipelineStageColor[s.key] } : undefined}
+            >
+              <span className="h-2 w-2 rounded-full" style={{ background: active ? "rgba(255,255,255,0.9)" : pipelineStageColor[s.key] }} />
+              {s.label}
+              <span className="opacity-70">{stageCounts.get(s.key) ?? 0}</span>
+            </button>
+          );
+        })}
+        {hasFilters && (
           <button
             className="ghost-button px-3 py-1.5 text-xs"
             onClick={() => {
@@ -1253,153 +1309,186 @@ export function PipelineView() {
             }}
             type="button"
           >
-            Clear filters
+            Clear
           </button>
         )}
+        <span className="ml-auto text-xs text-[var(--muted)]">
+          Showing {filtered.length} of {data.pipelineDeals.length} leads
+        </span>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        {stages
-          .filter((s) => activeStages.size === 0 || activeStages.has(s.key))
-          .map((stage) => {
-            const stageDeals = filtered.filter((deal) => deal.stage === stage.key);
-            return (
-              <div key={stage.key} className="rounded-[1.6rem] bg-white/76 p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">{stage.label}</h3>
-                  <span className="pill bg-[var(--accent-soft)] text-[var(--accent-strong)]">
-                    {stageDeals.length}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {stageDeals.map((deal, cardIndex) => (
-                    <article
-                      key={deal.id}
-                      className="dd-rise rounded-[1.25rem] border border-[var(--line)] bg-white p-3"
-                      style={{ animationDelay: `${Math.min(cardIndex, 10) * 35}ms` }}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <input
-                            className="field text-sm"
-                            value={deal.businessName}
-                            onChange={(e) =>
-                              updatePipelineDeal(deal.id, { businessName: e.target.value })
-                            }
-                          />
-                          <input
-                            className="field mt-1.5 text-sm"
-                            value={deal.contactName}
-                            onChange={(e) =>
-                              updatePipelineDeal(deal.id, { contactName: e.target.value })
-                            }
-                          />
-                        </div>
-                        <button
-                          className="delete-button mt-1 shrink-0"
-                          onClick={() => {
-                            if (confirm(`Move ${deal.businessName || "this pipeline lead"} to Trash? You can restore it for 30 days.`)) {
-                              deletePipelineDeal(deal.id);
-                            }
-                          }}
-                          title="Delete"
-                          type="button"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-
-                      {/* Phone + email -- editable, not just a display label */}
-                      <div className="mt-2 grid gap-2 grid-cols-2">
-                        <input
-                          className="field text-sm"
-                          value={deal.phone || ""}
-                          onChange={(e) => updatePipelineDeal(deal.id, { phone: e.target.value })}
-                          placeholder="Phone"
-                        />
-                        <input
-                          className="field text-sm"
-                          value={deal.email || ""}
-                          onChange={(e) => updatePipelineDeal(deal.id, { email: e.target.value })}
-                          placeholder="Email"
-                          type="email"
-                        />
-                      </div>
-
-                      <div className="mt-2 grid gap-2 grid-cols-2">
-                        <input
-                          className="field text-sm"
-                          value={deal.requestLabel}
-                          onChange={(e) =>
-                            updatePipelineDeal(deal.id, { requestLabel: e.target.value })
-                          }
-                          placeholder="Request"
-                        />
-                        <select
-                          className="field text-sm"
-                          value={deal.stage}
-                          onChange={(e) =>
-                            updatePipelineDeal(deal.id, {
-                              stage: e.target.value as PipelineStage,
-                            })
-                          }
-                        >
-                          {stages.map((o) => (
-                            <option key={o.key} value={o.key}>
-                              {o.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <textarea
-                        className="field mt-2 min-h-[72px] text-sm"
-                        value={deal.notes}
-                        onChange={(e) =>
-                          updatePipelineDeal(deal.id, { notes: e.target.value })
-                        }
-                        placeholder="Notes"
-                      />
-                      <div className="mt-2 grid gap-2 grid-cols-2">
-                        <input
-                          className="field text-sm"
-                          type="date"
-                          value={toDateInput(deal.submittedDate)}
-                          onChange={(e) =>
-                            updatePipelineDeal(deal.id, {
-                              submittedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined,
-                            })
-                          }
-                          title="Lead date"
-                        />
-                        <input
-                          className="field text-sm"
-                          type="date"
-                          value={toDateInput(deal.nextFollowUpDate)}
-                          onChange={(e) =>
-                            updatePipelineDeal(deal.id, {
-                              nextFollowUpDate: e.target.value
-                                ? `${e.target.value}T00:00:00.000Z`
-                                : undefined,
-                            })
-                          }
-                        />
-                        <input
-                          className="field text-sm"
-                          value={deal.statusRaw}
-                          onChange={(e) =>
-                            updatePipelineDeal(deal.id, { statusRaw: e.target.value })
-                          }
-                          placeholder="Raw status"
-                        />
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-      </div>
+      {filtered.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-[var(--line)] bg-white/60 p-12 text-center text-sm text-[var(--muted)]">
+          No leads match your filters.
+        </div>
+      ) : (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {filtered.map((deal, index) => (
+            <PipelineLeadCard key={deal.id} deal={deal} index={index} />
+          ))}
+        </div>
+      )}
     </SectionFrame>
+  );
+}
+
+/**
+ * A single pipeline lead as one uniform card in the fluid grid. A colored top border + stage dot
+ * signal where the lead sits at a glance; every field stays inline-editable. Deletion uses an
+ * inline two-step confirm (InlineDeleteButton) rather than a native confirm() dialog -- native
+ * dialogs can be permanently suppressed by the browser after the user ticks "don't show again",
+ * which silently swallowed the delete and left the card on screen.
+ */
+function PipelineLeadCard({ deal, index }: { deal: PipelineDeal; index: number }) {
+  const { updatePipelineDeal, deletePipelineDeal } = useDealdash();
+  return (
+    <article
+      className="dd-rise dd-hover-lift flex flex-col gap-2.5 rounded-2xl border border-[var(--line)] bg-white/90 p-4"
+      style={{ animationDelay: `${Math.min(index, 12) * 25}ms`, borderTop: `3px solid ${pipelineStageColor[deal.stage]}` }}
+    >
+      {/* Stage + delete */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pipelineStageColor[deal.stage] }} />
+          <select
+            className="field min-w-0 !py-1.5 text-xs font-semibold"
+            value={deal.stage}
+            onChange={(e) => updatePipelineDeal(deal.id, { stage: e.target.value as PipelineStage })}
+            aria-label={`Stage for ${deal.businessName || "lead"}`}
+          >
+            {stages.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <InlineDeleteButton label={`Delete ${deal.businessName || "lead"}`} onConfirm={() => deletePipelineDeal(deal.id)} />
+      </div>
+
+      {/* Identity */}
+      <input
+        className="field text-sm font-semibold"
+        value={deal.businessName}
+        onChange={(e) => updatePipelineDeal(deal.id, { businessName: e.target.value })}
+        placeholder="Business name"
+      />
+      <input
+        className="field text-sm"
+        value={deal.contactName}
+        onChange={(e) => updatePipelineDeal(deal.id, { contactName: e.target.value })}
+        placeholder="Contact name"
+      />
+
+      {/* Contact */}
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          className="field text-sm"
+          value={deal.phone || ""}
+          onChange={(e) => updatePipelineDeal(deal.id, { phone: e.target.value })}
+          placeholder="Phone"
+        />
+        <input
+          className="field text-sm"
+          value={deal.email || ""}
+          onChange={(e) => updatePipelineDeal(deal.id, { email: e.target.value })}
+          placeholder="Email"
+          type="email"
+        />
+      </div>
+
+      {/* Request + raw status */}
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          className="field text-sm"
+          value={deal.requestLabel}
+          onChange={(e) => updatePipelineDeal(deal.id, { requestLabel: e.target.value })}
+          placeholder="Request, e.g. 100k"
+        />
+        <input
+          className="field text-sm"
+          value={deal.statusRaw}
+          onChange={(e) => updatePipelineDeal(deal.id, { statusRaw: e.target.value })}
+          placeholder="Raw status"
+        />
+      </div>
+
+      {/* Notes */}
+      <textarea
+        className="field min-h-[64px] text-sm"
+        value={deal.notes}
+        onChange={(e) => updatePipelineDeal(deal.id, { notes: e.target.value })}
+        placeholder="Notes"
+      />
+
+      {/* Dates */}
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+          Lead date
+          <input
+            className="field text-sm font-normal normal-case"
+            type="date"
+            value={toDateInput(deal.submittedDate)}
+            onChange={(e) => updatePipelineDeal(deal.id, { submittedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+          Next follow-up
+          <input
+            className="field text-sm font-normal normal-case"
+            type="date"
+            value={toDateInput(deal.nextFollowUpDate)}
+            onChange={(e) => updatePipelineDeal(deal.id, { nextFollowUpDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
+          />
+        </label>
+      </div>
+    </article>
+  );
+}
+
+/**
+ * Two-step inline delete: the trash icon arms a "Delete / Cancel" pair rather than opening a native
+ * confirm() dialog. Native dialogs are unreliable (browsers let users permanently suppress them,
+ * after which confirm() returns false with no prompt), so this both fixes that class of bug and
+ * reads as a more modern control. The armed state auto-cancels after a few seconds.
+ */
+function InlineDeleteButton({ onConfirm, label = "Delete" }: { onConfirm: () => void; label?: string }) {
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = setTimeout(() => setConfirming(false), 4000);
+    return () => clearTimeout(timer);
+  }, [confirming]);
+
+  if (confirming) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          className="rounded-lg bg-[var(--danger)] px-2 py-1 text-xs font-semibold text-white transition hover:opacity-90"
+          onClick={() => {
+            setConfirming(false);
+            onConfirm();
+          }}
+        >
+          Delete
+        </button>
+        <button
+          type="button"
+          className="rounded-lg border border-[var(--line)] px-2 py-1 text-xs text-[var(--muted)] transition hover:bg-white"
+          onClick={() => setConfirming(false)}
+        >
+          Cancel
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <button type="button" className="delete-button shrink-0" title={label} aria-label={label} onClick={() => setConfirming(true)}>
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
   );
 }
 

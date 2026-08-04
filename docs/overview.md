@@ -65,6 +65,7 @@ dealdash/
 - The Funded Progress cards are collapsed to a summary (badges, name, funder, funded amount, remaining balance, progress bar) and expand on click to the full inline editor + advanced servicing panel. Numeric fields are free-typing decimal text boxes (`DecimalField`), not spinner inputs, so values like `1.499` or `10.4` type cleanly.
 - Deals with a persisted payment schedule (see below) have a second, more precise balance available in the "Advanced adjustments" panel: calculated from actual posted `PaymentScheduleEntry` rows rather than elapsed-time estimation.
 - Renewal timing defaults to **50%** of the term unless manually overridden (marketed once a deal is roughly half paid down, not near maturity).
+- Every funded deal shows an **expected end date** (its maturity date) -- `expectedEndDateForFundedDeal` (`calculations.ts`) prefers the persisted schedule's real last-payment date (`scheduleEndDate`) and falls back to an estimate computed with the exact same schedule date math when no schedule exists yet, so the date is always available. Rendered with `formatCalendarDate` (UTC) since it's a calendar date.
 - Commission payout status is tracked separately from the funded file status.
 - Funded tags are persisted on `fundedTags` and augmented at render time from obvious status/math signals.
 - Tag tint priority is deliberate: clawback red wins, then paid-in-full green, then active blue.
@@ -119,6 +120,20 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
   syndication %, bonus. Outputs: net funded amount, total payback, payment amount, rep profit.
 - See `docs/DATA_MODEL.md` for the exact formulas and the intentional simplifications (no
   syndicator management fees modeled, payments assumed once per term-unit period).
+
+## Pipeline board
+
+- Rendered as one fluid, uniform responsive card grid (`PipelineLeadCard`) rather than uneven
+  per-stage columns. Leads are clustered by stage (in pipeline order, newest first within a stage)
+  and each card carries a colored top-border + stage dot (`pipelineStageColor`) so the stage reads
+  at a glance while every field stays inline-editable.
+- The filter bar is a colored, dotted stage rail with live per-stage counts plus an "All leads"
+  reset and a "Showing X of Y" summary -- no separate "Stage filters" label.
+- Deletion uses an inline two-step confirm (`InlineDeleteButton`: trash icon → Delete/Cancel),
+  **not** a native `confirm()` dialog. Native dialogs can be permanently suppressed by the browser
+  after a user ticks "don't show again", after which `confirm()` silently returns false and the
+  delete never fires -- which is why deleting a lead previously appeared to do nothing. The armed
+  state auto-cancels after a few seconds.
 
 ## Month and date filtering
 
