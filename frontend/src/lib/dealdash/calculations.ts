@@ -1,3 +1,4 @@
+import { firstPaymentAnchor, scheduleEndDate } from "./schedule.ts";
 import type { FundedDeal, PaymentFrequency, TermUnit } from "./types";
 
 export function roundCurrency(value: number) {
@@ -225,4 +226,27 @@ export function renewalDateForFundedDeal(deal: FundedDeal) {
     renewal.setMonth(renewal.getMonth() + Math.max(1, Math.round(deal.termValue * RENEWAL_TERM_FRACTION)));
   }
   return renewal.toISOString();
+}
+
+/**
+ * The deal's expected maturity / end date -- the due date of its final payment. Prefers the real
+ * value derived from the persisted schedule (`scheduleEndDate`, attached by the workspace loader as
+ * the max due date). When no schedule exists yet, it estimates the exact same date the schedule
+ * generator would produce -- reusing the identical anchor (firstPaymentAnchor) and end-date
+ * (scheduleEndDate) math from schedule.ts -- so every funded deal can always show an expected end
+ * date, whether or not a schedule has been generated. Returns undefined only when there's no funded
+ * date or no term to project from. The result is a UTC-midnight calendar date; render it with
+ * formatCalendarDate, not the local-time formatDate.
+ */
+export function expectedEndDateForFundedDeal(deal: FundedDeal): string | undefined {
+  if (deal.scheduleEndDate) return deal.scheduleEndDate;
+  if (!deal.fundedDate) return undefined;
+  const funded = new Date(deal.fundedDate);
+  if (Number.isNaN(funded.getTime())) return undefined;
+  const periods = Math.trunc(deal.termValue || 0);
+  if (periods <= 0) return undefined;
+  const firstPaymentDate = deal.firstPaymentDate ? new Date(deal.firstPaymentDate) : null;
+  const anchor = firstPaymentAnchor(funded, deal.paymentFrequency, firstPaymentDate);
+  const weekday = deal.paymentFrequency === "weekly" ? (deal.paymentWeekday ?? funded.getUTCDay()) : null;
+  return scheduleEndDate(anchor, deal.paymentFrequency, weekday, periods)?.toISOString();
 }
