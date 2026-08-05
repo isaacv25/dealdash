@@ -34,6 +34,13 @@ import { FundedDealAdvancedPanel } from "./funded-deal-panel";
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" });
+// Fuller "August 2026" form used for the pipeline board's month section headers.
+const monthHeadingFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
+function getMonthHeading(key: string) {
+  if (key === "unknown") return "No date set";
+  const [year, month] = key.split("-").map(Number);
+  return monthHeadingFormatter.format(new Date(year, month - 1, 1));
+}
 
 const stages: Array<{ key: PipelineStage; label: string }> = [
   { key: "new-lead", label: "New Lead" },
@@ -1204,14 +1211,29 @@ export function PipelineView() {
               .toLowerCase()
               .includes(deferredQuery.toLowerCase()),
         )
-        // One fluid grid instead of uneven per-stage columns: cluster same-stage leads together in
-        // pipeline order (newest first within a stage) so the board still reads as an ordered flow.
+        // Within each month section the leads are clustered by stage (pipeline order), newest first
+        // within a stage, so each month still reads as an ordered flow rather than a random pile.
         .sort((a, b) => {
           const byStage = stageOrder[a.stage] - stageOrder[b.stage];
           return byStage !== 0 ? byStage : (b.submittedDate ?? "").localeCompare(a.submittedDate ?? "");
         }),
     [data.pipelineDeals, deferredQuery, activeStages, activeMonth],
   );
+
+  // Group the filtered leads into month sections (keyed by lead/submitted date) so the board can be
+  // tracked and scanned by the month deals came in. Newest month first; undated leads sort last.
+  const monthGroups = useMemo(() => {
+    const groups = new Map<string, PipelineDeal[]>();
+    for (const deal of filtered) {
+      const key = getMonthKey(deal.submittedDate);
+      const list = groups.get(key);
+      if (list) list.push(deal);
+      else groups.set(key, [deal]);
+    }
+    return Array.from(groups.keys())
+      .sort((a, b) => (a === "unknown" ? 1 : b === "unknown" ? -1 : b.localeCompare(a)))
+      .map((key) => ({ key, heading: getMonthHeading(key), deals: groups.get(key)! }));
+  }, [filtered]);
 
   function toggleStage(key: PipelineStage) {
     setActiveStages((prev) => {
@@ -1322,9 +1344,31 @@ export function PipelineView() {
           No leads match your filters.
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filtered.map((deal, index) => (
-            <PipelineLeadCard key={deal.id} deal={deal} index={index} />
+        // Grouped into month sections so leads can be tracked and picked by the month they came in.
+        // Each month heading is clickable to narrow the whole board to that month (toggle off to
+        // return to all months).
+        <div className="space-y-7">
+          {monthGroups.map((group) => (
+            <section key={group.key}>
+              <button
+                type="button"
+                onClick={() => setActiveMonth(activeMonth === group.key ? "all" : group.key)}
+                title={activeMonth === group.key ? "Show all months" : `Show only ${group.heading}`}
+                className="group mb-3 flex w-full items-center gap-3 text-left"
+              >
+                <span className="text-sm font-semibold tracking-tight">{group.heading}</span>
+                <span className="pill bg-[var(--accent-soft)] text-xs text-[var(--accent-strong)]">{group.deals.length}</span>
+                <span className="h-px flex-1 bg-[var(--line)] transition group-hover:bg-[var(--accent-strong)]/40" />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] opacity-0 transition group-hover:opacity-100">
+                  {activeMonth === group.key ? "Show all" : "Filter"}
+                </span>
+              </button>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {group.deals.map((deal, index) => (
+                  <PipelineLeadCard key={deal.id} deal={deal} index={index} />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
