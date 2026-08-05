@@ -101,30 +101,23 @@ function getMonthKey(value?: string) {
   if (!value) return "unknown";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return "unknown";
-  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function getMonthLabel(key: string) {
-  if (key === "unknown") return "Unknown date";
-  const [year, month] = key.split("-").map(Number);
-  return monthFormatter.format(new Date(year, month - 1, 1));
+  // Bucket by the stored UTC calendar date (dates are saved as `${YYYY-MM-DD}T00:00:00.000Z`), so a
+  // lead dated the 1st of a month doesn't slip into the previous month in timezones behind UTC.
+  return `${parsed.getUTCFullYear()}-${String(parsed.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function buildMonthOptions<T>(items: T[], getDate: (item: T) => string | undefined) {
-  // Keep undated CSV/manual rows visible instead of letting month filters hide them forever.
+  // Only months that actually contain records, newest first (undated last). A filter dropdown padded
+  // with empty future months just looks broken -- every option here narrows to real results. New
+  // future-dated records surface their own month automatically once they exist.
   const keys = new Set(items.map((item) => getMonthKey(getDate(item))));
-  const today = new Date();
-  for (let offset = 0; offset <= 12; offset += 1) {
-    const future = new Date(today.getFullYear(), today.getMonth() + offset, 1);
-    keys.add(`${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, "0")}`);
-  }
   return Array.from(keys)
     .sort((left, right) => {
       if (left === "unknown") return 1;
       if (right === "unknown") return -1;
       return right.localeCompare(left);
     })
-    .map((key) => ({ key, label: getMonthLabel(key) }));
+    .map((key) => ({ key, label: key === "unknown" ? "No date set" : getMonthHeading(key) }));
 }
 
 function todayDateInput() {
@@ -610,7 +603,7 @@ export function FundedProgressView() {
             placeholder="Search funded deals..."
           />
           <select
-            className="field max-h-64 min-w-[170px] text-sm"
+            className="field max-h-64 min-w-[180px] text-sm"
             value={activeMonth}
             onChange={(e) => setActiveMonth(e.target.value)}
           >
@@ -1260,7 +1253,7 @@ export function PipelineView() {
             placeholder="Search pipeline"
           />
           <select
-            className="field max-h-64 min-w-[150px] text-sm"
+            className="field max-h-64 min-w-[180px] text-sm"
             value={activeMonth}
             onChange={(e) => setActiveMonth(e.target.value)}
           >
