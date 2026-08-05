@@ -126,7 +126,13 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
 - Grouped into **month sections** keyed by lead/submitted date (newest month first; undated leads
   last), so leads can be tracked and picked by the month they came in. Each month heading shows the
   month + a count and is clickable to narrow the whole board to that month (click again to return to
-  all months); the month dropdown filter still works alongside it.
+  all months); the month dropdown filter works alongside it.
+- Month buckets use `getMonthKey`, which reads the stored **UTC** calendar date so a lead dated the
+  1st of a month doesn't slip into the previous month in timezones behind UTC. The month dropdown
+  (`buildMonthOptions`, shared with Funded Progress) lists **only months that actually contain
+  records** -- newest first, labeled in full "Month Year" form (`getMonthHeading`, e.g. "August
+  2026") -- so every option filters to real results instead of padding the list with empty future
+  months.
 - Within each month section, leads render as one fluid, uniform responsive card grid
   (`PipelineLeadCard`) rather than uneven per-stage columns, clustered by stage (in pipeline order,
   newest first within a stage). Each card carries a colored top-border + stage dot
