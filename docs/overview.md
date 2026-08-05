@@ -123,10 +123,14 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
 
 ## Pipeline board
 
-- Rendered as one fluid, uniform responsive card grid (`PipelineLeadCard`) rather than uneven
-  per-stage columns. Leads are clustered by stage (in pipeline order, newest first within a stage)
-  and each card carries a colored top-border + stage dot (`pipelineStageColor`) so the stage reads
-  at a glance while every field stays inline-editable.
+- Grouped into **month sections** keyed by lead/submitted date (newest month first; undated leads
+  last), so leads can be tracked and picked by the month they came in. Each month heading shows the
+  month + a count and is clickable to narrow the whole board to that month (click again to return to
+  all months); the month dropdown filter still works alongside it.
+- Within each month section, leads render as one fluid, uniform responsive card grid
+  (`PipelineLeadCard`) rather than uneven per-stage columns, clustered by stage (in pipeline order,
+  newest first within a stage). Each card carries a colored top-border + stage dot
+  (`pipelineStageColor`) so the stage reads at a glance while every field stays inline-editable.
 - The filter bar is a colored, dotted stage rail with live per-stage counts plus an "All leads"
   reset and a "Showing X of Y" summary -- no separate "Stage filters" label.
 - Deletion uses an inline two-step confirm (`InlineDeleteButton`: trash icon → Delete/Cancel),
