@@ -1,5 +1,5 @@
 import { firstPaymentAnchor, scheduleEndDate } from "./schedule.ts";
-import type { FundedDeal, PaymentFrequency, TermUnit } from "./types";
+import type { FollowUpItem, FundedDeal, PaymentFrequency, PipelineDeal, TermUnit } from "./types";
 
 export function roundCurrency(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -249,4 +249,69 @@ export function expectedEndDateForFundedDeal(deal: FundedDeal): string | undefin
   const anchor = firstPaymentAnchor(funded, deal.paymentFrequency, firstPaymentDate);
   const weekday = deal.paymentFrequency === "weekly" ? (deal.paymentWeekday ?? funded.getUTCDay()) : null;
   return scheduleEndDate(anchor, deal.paymentFrequency, weekday, periods)?.toISOString();
+}
+
+// ── Dashboard quick-view eligibility ─────────────────────────────────────────
+// Pure predicates for the dashboard's three reminder sections. Kept here (not in the component)
+// so they are unit-testable and share one definition of "aged into a new month".
+
+/** Year*12 + month in UTC, so two dates can be compared by calendar month regardless of day/time. */
+function utcMonthIndex(date: Date): number {
+  return date.getUTCFullYear() * 12 + date.getUTCMonth();
+}
+
+// A pipeline lead that has reached one of these stages is no longer actively being worked toward a
+// fresh submission, so it never asks for new statements. "dead" is the Bad Deal/Blacklisted stage
+// the user explicitly called out; "declined" and "funded" are the other terminal outcomes.
+const TERMINAL_PIPELINE_STAGES = new Set(["dead", "declined", "funded"]);
+
+/**
+ * True when a pipeline lead needs fresh statements: it was submitted in an earlier calendar month
+ * than now (bank statements are monthly, so last month's are stale), it is still actively in play
+ * (not a terminal/blacklisted stage), and the monthly reminder has not already been acknowledged
+ * this month. Acknowledging snoozes it until the next month begins; marking it Bad Deal/Blacklisted
+ * removes it for good.
+ */
+export function pipelineNeedsNewStatements(deal: PipelineDeal, now: Date = new Date()): boolean {
+  if (deal.deletedAt) return false;
+  if (TERMINAL_PIPELINE_STAGES.has(deal.stage)) return false;
+  if (!deal.submittedDate) return false;
+  const submitted = new Date(deal.submittedDate);
+  if (Number.isNaN(submitted.getTime())) return false;
+  const nowMonth = utcMonthIndex(now);
+  if (utcMonthIndex(submitted) >= nowMonth) return false;
+  if (deal.statementsAckAt) {
+    const ack = new Date(deal.statementsAckAt);
+    if (!Number.isNaN(ack.getTime()) && utcMonthIndex(ack) >= nowMonth) return false;
+  }
+  return true;
+}
+
+/** Percent-paid threshold at which a funded deal becomes a renewal candidate on the dashboard. */
+export const RENEWAL_CANDIDATE_MIN_PERCENT = 35;
+
+/**
+ * True when a funded deal is far enough along to pitch a renewal (35%+ paid down) and has not been
+ * dismissed from the dashboard's "Upcoming renewals" quick view.
+ */
+export function fundedDealIsRenewalCandidate(deal: FundedDeal, now: Date = new Date()): boolean {
+  if (deal.deletedAt) return false;
+  if (deal.renewalAckAt) return false;
+  return progressForFundedDeal(deal, now).progressPercent >= RENEWAL_CANDIDATE_MIN_PERCENT;
+}
+
+/** A follow-up surfaces on the dashboard once it has sat this long since being added. */
+export const FOLLOW_UP_DASHBOARD_AGE_DAYS = 30;
+
+/**
+ * True when a follow-up should nag on the dashboard: it is still open, not dismissed from the
+ * dashboard, and at least ~a month has passed since it was added (createdAt) -- i.e. it is time to
+ * actually follow up.
+ */
+export function followUpIsDueOnDashboard(item: FollowUpItem, now: Date = new Date()): boolean {
+  if (item.completed || item.deletedAt || item.dashboardAckAt) return false;
+  if (!item.createdAt) return false;
+  const created = new Date(item.createdAt);
+  if (Number.isNaN(created.getTime())) return false;
+  return now.getTime() - created.getTime() >= FOLLOW_UP_DASHBOARD_AGE_DAYS * 24 * 60 * 60 * 1000;
 }

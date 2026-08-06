@@ -102,6 +102,26 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
   collapsed-by-default "Advanced adjustments" section, requires an effective date and reason, and
   shows calculated vs. overridden vs. difference explicitly.
 
+## Dashboard quick-view reminders
+
+The dashboard shows three dismissible reminder rails (`ReminderRail`/`ReminderItem` in `views.tsx`),
+each backed by a pure predicate in `calculations.ts` so the rules are testable and shared:
+
+- **Upcoming follow-ups** -- a follow-up surfaces once ~a month (`FOLLOW_UP_DASHBOARD_AGE_DAYS` = 30)
+  has passed since it was added (`createdAt`) and it is still open. Each has an **Acknowledge** action
+  that sets `FollowUpItem.dashboardAckAt` to silence it on the dashboard (it stays on the Follow-Ups
+  sheet).
+- **Upcoming renewals** -- a funded deal appears once it is `RENEWAL_CANDIDATE_MIN_PERCENT` (35%) or
+  more paid down. **Dismiss** sets `FundedDeal.renewalAckAt` and removes it for good.
+- **Need new statements** -- a pipeline lead appears once it has rolled into a later calendar month
+  than it was submitted in (bank statements are monthly, so last month's are stale), unless it is a
+  terminal stage: Bad Deal/Blacklisted (`dead`), `declined`, or `funded`. **Got statements** sets
+  `PipelineDeal.statementsAckAt`, snoozing it until the next month begins; mark a lead
+  Bad Deal/Blacklisted to remove it for good.
+
+Import history (Recent import batches) lives on the Imports page now, not the dashboard, which stays
+focused on operating reminders.
+
 ## Hidden financials behavior
 
 - `hideFinancialsByDefault` is stored on the `User` row.
@@ -123,10 +143,16 @@ See `docs/DATA_MODEL.md` for the full model reference and calculation formulas. 
 
 ## Pipeline board
 
-- Grouped into **month sections** keyed by lead/submitted date (newest month first; undated leads
-  last), so leads can be tracked and picked by the month they came in. Each month heading shows the
-  month + a count and is clickable to narrow the whole board to that month (click again to return to
-  all months); the month dropdown filter works alongside it.
+- **Stage filters** (labels the broker uses; keys unchanged): New Lead/Missing Statements, Submitted,
+  Pending Review, Approved, Contracts Sent, Funded, Declined, Bad Deal/Blacklisted. "renewal" is no
+  longer an offered pipeline stage (renewals are tracked on the funded/dashboard side) but stays
+  defined so any legacy record still renders. Leads are always displayed in this stage order.
+- **Search matches any field** on a lead -- business, contact, email, phone, request, city/state, raw
+  status, notes, sheet -- so e.g. "john" finds every John however he appears.
+- Grouped into **collapsible month sections** keyed by lead/submitted date (newest month first;
+  undated leads last), so leads can be tracked, scanned, and picked by the month they came in. Each
+  month heading collapses/expands that month's grid; a secondary "Only this / Show all" control
+  narrows the whole board to that one month. The month dropdown filter works alongside it.
 - Month buckets use `getMonthKey`, which reads the stored **UTC** calendar date so a lead dated the
   1st of a month doesn't slip into the previous month in timezones behind UTC. The month dropdown
   (`buildMonthOptions`, shared with Funded Progress) lists **only months that actually contain

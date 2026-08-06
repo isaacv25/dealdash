@@ -49,7 +49,7 @@ function buildPendingImport(file: { name: string }, headers: string[], rows: Rec
 }
 
 export function ImportsView() {
-  const { importData } = useDealdash();
+  const { importData, data } = useDealdash();
   const [pending, setPending] = useState<PendingImport[]>([]);
 
   async function handleFiles(fileList: FileList | null) {
@@ -138,6 +138,31 @@ export function ImportsView() {
               onImport={() => commitImport(item)}
             />
           ))
+        )}
+      </div>
+
+      {/* Import history -- moved here from the dashboard, which stays focused on operating reminders. */}
+      <div className="mt-8 border-t border-[var(--line)] pt-6">
+        <h3 className="text-base font-semibold">Recent import batches</h3>
+        <p className="mt-0.5 text-xs text-[var(--muted)]">Every CSV merge that has landed in this workspace.</p>
+        {data.importBatches.length === 0 ? (
+          <p className="mt-4 rounded-[1.15rem] border border-dashed border-[var(--line)] p-6 text-center text-sm text-[var(--muted)]">
+            No imports yet.
+          </p>
+        ) : (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {data.importBatches.map((batch) => (
+              <div key={batch.id} className="rounded-[1.15rem] border border-[var(--line)] bg-white/70 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm font-semibold">{batch.filename}</p>
+                  <span className="pill shrink-0 bg-[var(--accent-soft)] text-xs text-[var(--accent-strong)]">
+                    {IMPORT_DESTINATION_LABELS[batch.importType]}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-[var(--muted)]">{batch.rowsImported} rows imported</p>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </SectionFrame>

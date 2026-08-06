@@ -15,15 +15,18 @@ import {
 import {
   calculateRateScenario,
   expectedEndDateForFundedDeal,
+  followUpIsDueOnDashboard,
+  fundedDealIsRenewalCandidate,
   grossPaybackFromDeal,
   HELOC_TERM_YEARS,
+  pipelineNeedsNewStatements,
   progressForFundedDeal,
   psfPayout,
   renewalDateForFundedDeal,
   totalPayoutForFundedDeal,
 } from "@/lib/dealdash";
 import type { FollowUpItem, FundedDeal, FundedDealType, FundedTag, PipelineDeal, PipelineStage } from "@/lib/dealdash";
-import { CalendarClock, ChevronDown, Copy, Download, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Check, ChevronDown, Copy, Download, Eye, EyeOff, FileClock, Plus, RefreshCcw, Trash2, X } from "lucide-react";
 import { useDealdash } from "./state";
 import { formatCurrency, formatCalendarDate, formatDate, dateInputToIso, toDateInput } from "@/lib/dealdash/format";
 import { MAX_SYNDICATION_PERCENT, MIN_SYNDICATION_PERCENT, normalizeSyndicationPercent, termUnitForFrequency } from "@/lib/dealdash/finance";
@@ -42,17 +45,33 @@ function getMonthHeading(key: string) {
   return monthHeadingFormatter.format(new Date(year, month - 1, 1));
 }
 
+// Pipeline stage keys are unchanged (stored as free strings on PipelineDeal.stage) but their labels
+// match the broker's own wording. "renewal" is intentionally not offered as a pipeline stage anymore
+// -- renewals are tracked on the Funded Progress / dashboard side -- but it stays defined below so a
+// legacy record that still carries it renders without breaking.
 const stages: Array<{ key: PipelineStage; label: string }> = [
-  { key: "new-lead", label: "New Lead" },
+  { key: "new-lead", label: "New Lead/Missing Statements" },
   { key: "submitted", label: "Submitted" },
-  { key: "in-review", label: "In Review" },
+  { key: "in-review", label: "Pending Review" },
   { key: "approved", label: "Approved" },
-  { key: "contract-out", label: "Contract Out" },
+  { key: "contract-out", label: "Contracts Sent" },
   { key: "funded", label: "Funded" },
   { key: "declined", label: "Declined" },
-  { key: "dead", label: "Dead" },
-  { key: "renewal", label: "Renewal" },
+  { key: "dead", label: "Bad Deal/Blacklisted" },
 ];
+
+// Short label for compact spots (chips/cards) where the full stage name is too long.
+const stageShortLabel: Record<PipelineStage, string> = {
+  "new-lead": "New Lead",
+  submitted: "Submitted",
+  "in-review": "Pending Review",
+  approved: "Approved",
+  "contract-out": "Contracts Sent",
+  funded: "Funded",
+  declined: "Declined",
+  dead: "Bad Deal",
+  renewal: "Renewal",
+};
 
 // A theme-consistent accent color per pipeline stage (reuses the app's CSS variables where possible)
 // so the redesigned board can dot/tint each lead by where it sits without introducing a new palette.
@@ -70,6 +89,8 @@ const pipelineStageColor: Record<PipelineStage, string> = {
 
 // Pipeline order used to cluster same-stage leads together in the single fluid grid.
 const stageOrder: Record<PipelineStage, number> = Object.fromEntries(stages.map((s, i) => [s.key, i] as const)) as Record<PipelineStage, number>;
+// A stage no longer in the standard list (e.g. legacy "renewal") sorts to the end rather than NaN.
+const orderForStage = (stage: PipelineStage) => stageOrder[stage] ?? stages.length;
 
 const fundedTagOptions: Array<{ key: FundedTag; label: string }> = [
   { key: "clawback", label: "Clawback" },
@@ -288,7 +309,7 @@ function toggleFundedTag(tags: FundedTag[], tag: FundedTag) {
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export function DashboardView() {
-  const { data, showFinancials } = useDealdash();
+  const { data, showFinancials, updateFollowUp, updateFundedDeal, updatePipelineDeal } = useDealdash();
   const [today] = useState(() => Date.now());
   const [hiddenMetrics, setHiddenMetrics] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") {
@@ -325,13 +346,6 @@ export function DashboardView() {
       (sum, deal) => sum + progressForFundedDeal(deal).balanceRemaining,
       0,
     );
-    const upcomingRenewals = data.fundedDeals.filter((deal) => {
-      const renewalDate = renewalDateForFundedDeal(deal);
-      if (!renewalDate) return false;
-      const diff = new Date(renewalDate).getTime() - today;
-      return diff >= 0 && diff <= 1000 * 60 * 60 * 24 * 45;
-    }).length;
-
     return {
       fundedVolume,
       commission,
@@ -340,9 +354,8 @@ export function DashboardView() {
       fundedCount: data.fundedDeals.length,
       pipelineCount: data.pipelineDeals.length,
       followUpCount: data.followUps.filter((item) => !item.completed).length,
-      upcomingRenewals,
     };
-  }, [data, today]);
+  }, [data]);
 
   const fundedByMonth = useMemo(() => {
     const buckets = new Map<string, number>();
@@ -367,13 +380,34 @@ export function DashboardView() {
       .slice(0, 8);
   }, [data.fundedDeals]);
 
-  const upcomingFollowUps = useMemo(
+  // ── Dashboard quick-view reminder lists (all shareable predicates live in calculations.ts) ──
+  const now = useMemo(() => new Date(today), [today]);
+
+  // Follow-ups that have sat ~a month since being added and haven't been acknowledged off the board.
+  const dueFollowUps = useMemo(
     () =>
-      [...data.followUps]
-        .filter((item) => !item.completed)
-        .sort((l, r) => (l.dueDate || "").localeCompare(r.dueDate || ""))
-        .slice(0, 6),
-    [data.followUps],
+      data.followUps
+        .filter((item) => followUpIsDueOnDashboard(item, now))
+        .sort((l, r) => (l.createdAt || "").localeCompare(r.createdAt || "")),
+    [data.followUps, now],
+  );
+
+  // Funded deals 35%+ paid down -- prime renewal pitches -- not yet dismissed.
+  const upcomingRenewals = useMemo(
+    () =>
+      data.fundedDeals
+        .filter((deal) => fundedDealIsRenewalCandidate(deal, now))
+        .sort((l, r) => progressForFundedDeal(r, now).progressPercent - progressForFundedDeal(l, now).progressPercent),
+    [data.fundedDeals, now],
+  );
+
+  // Pipeline leads that rolled into a new month and need fresh statements (bad deals excluded).
+  const needNewStatements = useMemo(
+    () =>
+      data.pipelineDeals
+        .filter((deal) => pipelineNeedsNewStatements(deal, now))
+        .sort((l, r) => (l.submittedDate || "").localeCompare(r.submittedDate || "")),
+    [data.pipelineDeals, now],
   );
 
   return (
@@ -400,7 +434,7 @@ export function DashboardView() {
         <MetricCard
           label="Commission Book"
           value={hiddenCurrency(!hiddenMetrics.commission, metrics.commission)}
-          detail={`${metrics.upcomingRenewals} renewals approaching`}
+          detail={`${upcomingRenewals.length} renewals ready`}
           hidden={Boolean(hiddenMetrics.commission)}
           onToggleVisibility={() => toggleMetricVisibility("commission")}
         />
@@ -470,48 +504,149 @@ export function DashboardView() {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <div className="rounded-[1.6rem] bg-white/76 p-5">
-          <div className="flex items-center gap-3">
-            <CalendarClock className="h-4 w-4 text-[var(--accent-strong)]" />
-            <h3 className="text-base font-semibold">Upcoming follow-ups</h3>
-          </div>
-          <div className="mt-4 space-y-2">
-            {upcomingFollowUps.map((item) => (
-              <div key={item.id} className="rounded-[1.15rem] border border-[var(--line)] p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold">{item.businessName}</p>
-                    <p className="text-xs text-[var(--muted)]">{item.contactName}</p>
-                  </div>
-                  <span className="pill bg-[var(--accent-soft)] text-[var(--accent-strong)]">
-                    {item.dueDate ? formatDate(item.dueDate) : "No date"}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-[var(--muted)]">{item.notes || "No notes."}</p>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Three quick-view reminder rails. Each item is dismissible; empty rails show an all-clear. */}
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ReminderRail
+          icon={<CalendarClock className="h-4 w-4 text-[var(--accent-strong)]" />}
+          title="Upcoming follow-ups"
+          count={dueFollowUps.length}
+          emptyLabel="No follow-ups are due right now."
+        >
+          {dueFollowUps.map((item) => (
+            <ReminderItem
+              key={item.id}
+              title={item.businessName || item.contactName || "Follow-up"}
+              subtitle={item.contactName}
+              badge={item.createdAt ? `Added ${formatDate(item.createdAt)}` : undefined}
+              detail={item.notes || item.requestLabel || undefined}
+              actionLabel="Acknowledge"
+              actionIcon={<Check className="h-3.5 w-3.5" />}
+              onAction={() => updateFollowUp(item.id, { dashboardAckAt: new Date().toISOString() })}
+            />
+          ))}
+        </ReminderRail>
 
-        <div className="rounded-[1.6rem] bg-white/76 p-5">
-          <h3 className="text-base font-semibold">Recent import batches</h3>
-          <div className="mt-4 space-y-2">
-            {data.importBatches.slice(0, 6).map((batch) => (
-              <div key={batch.id} className="rounded-[1.15rem] border border-[var(--line)] p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold">{batch.filename}</p>
-                  <span className="pill bg-white text-[var(--foreground)]">{batch.importType}</span>
-                </div>
-                <p className="mt-1 text-xs text-[var(--muted)]">
-                  {batch.rowsImported} rows imported
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ReminderRail
+          icon={<RefreshCcw className="h-4 w-4 text-[var(--success)]" />}
+          title="Upcoming renewals"
+          count={upcomingRenewals.length}
+          emptyLabel="No deals are far enough along to renew yet."
+        >
+          {upcomingRenewals.map((deal) => {
+            const pct = progressForFundedDeal(deal, now).progressPercent;
+            return (
+              <ReminderItem
+                key={deal.id}
+                title={deal.businessName || "Funded deal"}
+                subtitle={[deal.contactName, deal.funder].filter(Boolean).join(" · ") || undefined}
+                badge={`${pct}% paid`}
+                badgeClass="bg-[var(--success)]/12 text-[var(--success)]"
+                detail={renewalDateForFundedDeal(deal) ? `Renewal target ${formatDate(renewalDateForFundedDeal(deal))}` : undefined}
+                actionLabel="Dismiss"
+                actionIcon={<X className="h-3.5 w-3.5" />}
+                onAction={() => updateFundedDeal(deal.id, { renewalAckAt: new Date().toISOString() })}
+              />
+            );
+          })}
+        </ReminderRail>
+
+        <ReminderRail
+          icon={<FileClock className="h-4 w-4 text-[var(--warn)]" />}
+          title="Need new statements"
+          count={needNewStatements.length}
+          emptyLabel="Every active lead has current statements."
+        >
+          {needNewStatements.map((deal) => (
+            <ReminderItem
+              key={deal.id}
+              title={deal.businessName || deal.contactName || "Lead"}
+              subtitle={deal.contactName}
+              badge={deal.submittedDate ? `Since ${getMonthHeading(getMonthKey(deal.submittedDate))}` : undefined}
+              badgeClass="bg-[var(--warn)]/12 text-[var(--warn)]"
+              detail={stageShortLabel[deal.stage]}
+              actionLabel="Got statements"
+              actionIcon={<Check className="h-3.5 w-3.5" />}
+              onAction={() => updatePipelineDeal(deal.id, { statementsAckAt: new Date().toISOString() })}
+            />
+          ))}
+        </ReminderRail>
       </div>
     </SectionFrame>
+  );
+}
+
+/** A titled, scrollable list rail for a dashboard reminder section, with a count and empty state. */
+function ReminderRail({
+  icon,
+  title,
+  count,
+  emptyLabel,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  count: number;
+  emptyLabel: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col rounded-[1.6rem] bg-white/76 p-5">
+      <div className="mb-3 flex items-center gap-2.5">
+        {icon}
+        <h3 className="text-base font-semibold">{title}</h3>
+        <span className="pill ml-auto bg-[var(--accent-soft)] text-xs text-[var(--accent-strong)]">{count}</span>
+      </div>
+      {count === 0 ? (
+        <p className="rounded-[1.15rem] border border-dashed border-[var(--line)] p-4 text-center text-xs text-[var(--muted)]">{emptyLabel}</p>
+      ) : (
+        <div className="max-h-[22rem] space-y-2 overflow-y-auto pr-1">{children}</div>
+      )}
+    </div>
+  );
+}
+
+/** One dismissible reminder row shared across all three dashboard rails. */
+function ReminderItem({
+  title,
+  subtitle,
+  badge,
+  badgeClass = "bg-[var(--accent-soft)] text-[var(--accent-strong)]",
+  detail,
+  actionLabel,
+  actionIcon,
+  onAction,
+}: {
+  title: string;
+  subtitle?: string;
+  badge?: string;
+  badgeClass?: string;
+  detail?: string;
+  actionLabel: string;
+  actionIcon: React.ReactNode;
+  onAction: () => void;
+}) {
+  return (
+    <div className="dd-rise rounded-[1.15rem] border border-[var(--line)] bg-white/70 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{title}</p>
+          {subtitle && <p className="truncate text-xs text-[var(--muted)]">{subtitle}</p>}
+        </div>
+        {badge && <span className={`pill shrink-0 text-[11px] ${badgeClass}`}>{badge}</span>}
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="min-w-0 flex-1 truncate text-xs text-[var(--muted)]">{detail || ""}</p>
+        <button
+          type="button"
+          onClick={onAction}
+          title={actionLabel}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[var(--line)] px-2 py-1 text-[11px] font-semibold text-[var(--muted)] transition hover:border-[var(--accent-strong)]/30 hover:bg-white hover:text-[var(--accent-strong)]"
+        >
+          {actionIcon}
+          {actionLabel}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1192,6 +1327,7 @@ export function PipelineView() {
     return counts;
   }, [data.pipelineDeals]);
 
+  const query_ = deferredQuery.trim().toLowerCase();
   const filtered = useMemo(
     () =>
       data.pipelineDeals
@@ -1199,18 +1335,34 @@ export function PipelineView() {
           (deal) =>
             (activeMonth === "all" || getMonthKey(deal.submittedDate) === activeMonth) &&
             (activeStages.size === 0 || activeStages.has(deal.stage)) &&
-            [deal.businessName, deal.contactName, deal.statusRaw, deal.notes]
-              .join(" ")
-              .toLowerCase()
-              .includes(deferredQuery.toLowerCase()),
+            // Search matches ANY text field on the lead -- name, business, contact, email, phone,
+            // request, city/state, raw status, notes, sheet -- so "john" finds every John however
+            // he appears.
+            (query_ === "" ||
+              [
+                deal.businessName,
+                deal.contactName,
+                deal.email,
+                deal.phone,
+                deal.requestLabel,
+                deal.city,
+                deal.state,
+                deal.statusRaw,
+                deal.notes,
+                deal.sheetLabel,
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase()
+                .includes(query_)),
         )
         // Within each month section the leads are clustered by stage (pipeline order), newest first
         // within a stage, so each month still reads as an ordered flow rather than a random pile.
         .sort((a, b) => {
-          const byStage = stageOrder[a.stage] - stageOrder[b.stage];
+          const byStage = orderForStage(a.stage) - orderForStage(b.stage);
           return byStage !== 0 ? byStage : (b.submittedDate ?? "").localeCompare(a.submittedDate ?? "");
         }),
-    [data.pipelineDeals, deferredQuery, activeStages, activeMonth],
+    [data.pipelineDeals, query_, activeStages, activeMonth],
   );
 
   // Group the filtered leads into month sections (keyed by lead/submitted date) so the board can be
@@ -1337,35 +1489,76 @@ export function PipelineView() {
           No leads match your filters.
         </div>
       ) : (
-        // Grouped into month sections so leads can be tracked and picked by the month they came in.
-        // Each month heading is clickable to narrow the whole board to that month (toggle off to
-        // return to all months).
-        <div className="space-y-7">
+        // Grouped into collapsible month sections so leads can be tracked, scanned, and picked by the
+        // month they came in.
+        <div className="space-y-5">
           {monthGroups.map((group) => (
-            <section key={group.key}>
-              <button
-                type="button"
-                onClick={() => setActiveMonth(activeMonth === group.key ? "all" : group.key)}
-                title={activeMonth === group.key ? "Show all months" : `Show only ${group.heading}`}
-                className="group mb-3 flex w-full items-center gap-3 text-left"
-              >
-                <span className="text-sm font-semibold tracking-tight">{group.heading}</span>
-                <span className="pill bg-[var(--accent-soft)] text-xs text-[var(--accent-strong)]">{group.deals.length}</span>
-                <span className="h-px flex-1 bg-[var(--line)] transition group-hover:bg-[var(--accent-strong)]/40" />
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] opacity-0 transition group-hover:opacity-100">
-                  {activeMonth === group.key ? "Show all" : "Filter"}
-                </span>
-              </button>
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {group.deals.map((deal, index) => (
-                  <PipelineLeadCard key={deal.id} deal={deal} index={index} />
-                ))}
-              </div>
-            </section>
+            <PipelineMonthSection
+              key={group.key}
+              heading={group.heading}
+              deals={group.deals}
+              isOnlyMonth={activeMonth === group.key}
+              onToggleFilter={() => setActiveMonth(activeMonth === group.key ? "all" : group.key)}
+            />
           ))}
         </div>
       )}
     </SectionFrame>
+  );
+}
+
+/**
+ * One collapsible month band on the pipeline board. The heading toggles the month open/closed (so
+ * the board can be scanned month-by-month); a secondary control narrows the whole board to just that
+ * month. Uses the shared dd-collapse height animation and dd-chevron rotation.
+ */
+function PipelineMonthSection({
+  heading,
+  deals,
+  isOnlyMonth,
+  onToggleFilter,
+}: {
+  heading: string;
+  deals: PipelineDeal[];
+  isOnlyMonth: boolean;
+  onToggleFilter: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <section>
+      <div className="mb-3 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setCollapsed((prev) => !prev)}
+          aria-expanded={!collapsed}
+          className="group flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        >
+          <ChevronDown className="dd-chevron h-4 w-4 shrink-0 text-[var(--muted)]" data-open={!collapsed} />
+          <span className="truncate text-sm font-semibold tracking-tight">{heading}</span>
+          <span className="pill shrink-0 bg-[var(--accent-soft)] text-xs text-[var(--accent-strong)]">{deals.length}</span>
+          <span className="h-px flex-1 bg-[var(--line)] transition group-hover:bg-[var(--accent-strong)]/40" />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleFilter}
+          title={isOnlyMonth ? "Show all months" : `Show only ${heading}`}
+          className={`shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition ${
+            isOnlyMonth ? "bg-[var(--accent-strong)] text-white" : "text-[var(--muted)] hover:bg-white"
+          }`}
+        >
+          {isOnlyMonth ? "Show all" : "Only this"}
+        </button>
+      </div>
+      <div className="dd-collapse" data-open={!collapsed}>
+        <div className="dd-collapse-inner">
+          <div className="grid gap-4 pb-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {deals.map((deal, index) => (
+              <PipelineLeadCard key={deal.id} deal={deal} index={index} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -1,7 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { expectedEndDateForFundedDeal, progressForFundedDeal, psfPayout, renewalDateForFundedDeal, totalPayoutForFundedDeal } from "../calculations.ts";
-import type { FundedDeal } from "../types.ts";
+import {
+  expectedEndDateForFundedDeal,
+  followUpIsDueOnDashboard,
+  fundedDealIsRenewalCandidate,
+  pipelineNeedsNewStatements,
+  progressForFundedDeal,
+  psfPayout,
+  renewalDateForFundedDeal,
+  totalPayoutForFundedDeal,
+} from "../calculations.ts";
+import type { FollowUpItem, FundedDeal, PipelineDeal } from "../types.ts";
 
 // Minimal funded-deal fixture: $50k at 1.4 over 20 weekly payments = $70,000 total payback,
 // $3,500 per payment. Individual tests override just the fields they exercise.
@@ -126,4 +135,101 @@ test("expected end date estimates from terms when no schedule exists yet", () =>
 test("expected end date is undefined without a funded date or without a term", () => {
   assert.equal(expectedEndDateForFundedDeal(deal({ fundedDate: undefined, termValue: 20 })), undefined);
   assert.equal(expectedEndDateForFundedDeal(deal({ fundedDate: "2026-01-01T00:00:00.000Z", termValue: 0 })), undefined);
+});
+
+// ── Dashboard quick-view eligibility ─────────────────────────────────────────
+
+const NOW = new Date("2026-08-15T12:00:00.000Z");
+
+function pipeline(overrides: Partial<PipelineDeal> = {}): PipelineDeal {
+  return {
+    id: "p1",
+    contactName: "Lead Contact",
+    businessName: "Lead Co",
+    requestLabel: "",
+    statusRaw: "",
+    stage: "in-review",
+    notes: "",
+    sheetLabel: "",
+    sourceLabel: "test",
+    submittedDate: "2026-07-10T00:00:00.000Z", // previous month relative to NOW (August)
+    ...overrides,
+  };
+}
+
+function followUp(overrides: Partial<FollowUpItem> = {}): FollowUpItem {
+  return {
+    id: "f1",
+    contactName: "FU Contact",
+    businessName: "FU Co",
+    requestLabel: "",
+    notes: "",
+    lastContactLabel: "",
+    priority: "medium",
+    appSubmitted: false,
+    completed: false,
+    sheetLabel: "",
+    sourceLabel: "test",
+    createdAt: "2026-07-01T00:00:00.000Z", // ~6 weeks before NOW
+    ...overrides,
+  };
+}
+
+test("pipeline lead from a prior month needs new statements", () => {
+  assert.equal(pipelineNeedsNewStatements(pipeline(), NOW), true);
+});
+
+test("pipeline lead submitted in the current month does not need new statements yet", () => {
+  assert.equal(pipelineNeedsNewStatements(pipeline({ submittedDate: "2026-08-05T00:00:00.000Z" }), NOW), false);
+});
+
+test("a blacklisted / bad-deal (dead) lead never asks for new statements", () => {
+  assert.equal(pipelineNeedsNewStatements(pipeline({ stage: "dead" }), NOW), false);
+});
+
+test("declined and funded leads are excluded from need-new-statements", () => {
+  assert.equal(pipelineNeedsNewStatements(pipeline({ stage: "declined" }), NOW), false);
+  assert.equal(pipelineNeedsNewStatements(pipeline({ stage: "funded" }), NOW), false);
+});
+
+test("acknowledging in the current month snoozes the statements reminder", () => {
+  assert.equal(pipelineNeedsNewStatements(pipeline({ statementsAckAt: "2026-08-02T00:00:00.000Z" }), NOW), false);
+});
+
+test("an acknowledgment from a prior month no longer suppresses the reminder", () => {
+  assert.equal(pipelineNeedsNewStatements(pipeline({ statementsAckAt: "2026-07-20T00:00:00.000Z" }), NOW), true);
+});
+
+test("a deleted pipeline lead never surfaces", () => {
+  assert.equal(pipelineNeedsNewStatements(pipeline({ deletedAt: "2026-08-01T00:00:00.000Z" }), NOW), false);
+});
+
+test("a funded deal 35%+ paid is a renewal candidate", () => {
+  // schedule aggregate: 8 of 20 posted ($28,000 of $70,000) = 40% >= 35%.
+  assert.equal(fundedDealIsRenewalCandidate(deal({ scheduledPaymentsCount: 20, postedPaymentsCount: 8, postedAmount: 28000 }), NOW), true);
+});
+
+test("a funded deal under 35% paid is not a renewal candidate", () => {
+  // 6 of 20 posted ($21,000 of $70,000) = 30% < 35%.
+  assert.equal(fundedDealIsRenewalCandidate(deal({ scheduledPaymentsCount: 20, postedPaymentsCount: 6, postedAmount: 21000 }), NOW), false);
+});
+
+test("a dismissed renewal (renewalAckAt set) is not a candidate", () => {
+  assert.equal(
+    fundedDealIsRenewalCandidate(deal({ scheduledPaymentsCount: 20, postedPaymentsCount: 8, postedAmount: 28000, renewalAckAt: "2026-08-01T00:00:00.000Z" }), NOW),
+    false,
+  );
+});
+
+test("a follow-up older than a month is due on the dashboard", () => {
+  assert.equal(followUpIsDueOnDashboard(followUp(), NOW), true);
+});
+
+test("a follow-up added only days ago is not due yet", () => {
+  assert.equal(followUpIsDueOnDashboard(followUp({ createdAt: "2026-08-10T00:00:00.000Z" }), NOW), false);
+});
+
+test("a completed or dashboard-acknowledged follow-up does not surface", () => {
+  assert.equal(followUpIsDueOnDashboard(followUp({ completed: true }), NOW), false);
+  assert.equal(followUpIsDueOnDashboard(followUp({ dashboardAckAt: "2026-08-01T00:00:00.000Z" }), NOW), false);
 });

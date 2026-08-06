@@ -345,6 +345,25 @@ Funded deals use `fundedDate` for month filtering. Pipeline deals use `submitted
 
 Manual funded and pipeline adds prompt for a date before creating the row. Month filter dropdowns include all months found in data plus the current month and the next 12 months, so future buckets appear as the business grows. Empty stage/tag filter sets mean "show all", not "show none".
 
+## Dashboard reminder fields
+
+Three nullable timestamp columns back the dashboard's dismissible quick-view rails. Each is written
+through the normal update path for its record (a plain field patch), and the matching predicate lives
+in `calculations.ts` so the eligibility rule is unit-tested and shared:
+
+- `FollowUpItem.dashboardAckAt` -- set when a follow-up is acknowledged off the dashboard's "Upcoming
+  follow-ups" rail. The item still lives on the Follow-Ups sheet. `followUpIsDueOnDashboard` shows a
+  follow-up once it is open and ~30 days (`FOLLOW_UP_DASHBOARD_AGE_DAYS`) past its `createdAt` (now
+  serialized to the client) and not acknowledged.
+- `FundedDeal.renewalAckAt` -- set when a deal is dismissed from "Upcoming renewals".
+  `fundedDealIsRenewalCandidate` shows a deal once it is `RENEWAL_CANDIDATE_MIN_PERCENT` (35%)+ paid
+  and not dismissed.
+- `PipelineDeal.statementsAckAt` -- set when "Need new statements" is acknowledged for a lead.
+  `pipelineNeedsNewStatements` shows a lead once its `submittedDate` is an earlier UTC calendar month
+  than now, it is not a terminal stage (`dead`/`declined`/`funded`), and it was not already
+  acknowledged this month -- so the reminder recurs monthly. Marking a lead Bad Deal/Blacklisted
+  (`dead`) removes it permanently.
+
 ## Import dedupe model
 
 Imported rows keep a stable normalized row key. On save, the server prefixes that key with the company ID before writing it to Postgres. That means:
