@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
+import { formatPhoneNumber } from "@/lib/dealdash/format";
 
 /**
  * A plain controlled <input type="number"> that re-derives its `value` from external state on
@@ -90,5 +91,37 @@ export function DecimalField({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * A plain controlled phone input that reformats to (###) ###-#### on every keystroke. Because the
+ * displayed value is always `formatPhoneNumber(value)`, typing digits anywhere and deleting
+ * characters both just re-derive the format from whatever digits remain -- no separate draft state
+ * needed the way DecimalField needs one for free-typing decimals.
+ */
+export function PhoneField({
+  value,
+  onChange,
+  placeholder = "(555) 123-4567",
+  className,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  return (
+    <input
+      className={`field text-sm ${className ?? ""}`}
+      type="tel"
+      inputMode="tel"
+      value={value}
+      onChange={(e) => onChange(formatPhoneNumber(e.target.value))}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+    />
   );
 }

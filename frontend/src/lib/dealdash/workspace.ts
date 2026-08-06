@@ -4,7 +4,7 @@ import { createBlankFollowUp, createBlankFundedDeal, createBlankPipelineDeal } f
 import { createRealDataset, loadSeedDataset } from "./data";
 import { deriveHelocFields } from "./finance";
 import { backfillMissingSchedules } from "./schedule-service";
-import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset, TrashRecord, TrashRecordType, ViewerProfile } from "./types";
+import type { FollowUpItem, FundedDeal, ImportBatch, LeadSheet, PipelineDeal, SeedDataset, TrashRecord, TrashRecordType, ViewerProfile } from "./types";
 
 const TRASH_RETENTION_DAYS = 30;
 
@@ -132,6 +132,10 @@ function serializeFollowUp(record: Prisma.FollowUpItemGetPayload<object>): Follo
     createdAt: toIso(record.createdAt),
     dashboardAckAt: toIso(record.dashboardAckAt),
   };
+}
+
+function serializeLeadSheet(record: Prisma.LeadSheetGetPayload<object>): LeadSheet {
+  return { id: record.id, name: record.name };
 }
 
 function serializeImportBatch(record: Prisma.ImportBatchGetPayload<object>): ImportBatch {
@@ -292,11 +296,12 @@ export async function resetWorkspaceToSeed(companyId: string, userId: string) {
 }
 
 export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
-  const [fundedDeals, pipelineDeals, followUps, importBatches] = await Promise.all([
+  const [fundedDeals, pipelineDeals, followUps, importBatches, leadSheets] = await Promise.all([
     prisma.fundedDeal.findMany({ where: { companyId, deletedAt: null }, orderBy: [{ fundedDate: "desc" }, { createdAt: "desc" }] }),
     prisma.pipelineDeal.findMany({ where: { companyId, deletedAt: null }, orderBy: [{ submittedDate: "desc" }, { createdAt: "desc" }] }),
     prisma.followUpItem.findMany({ where: { companyId, deletedAt: null }, orderBy: [{ completed: "asc" }, { updatedAt: "desc" }] }),
     prisma.importBatch.findMany({ where: { companyId }, orderBy: { importedAt: "desc" } }),
+    prisma.leadSheet.findMany({ where: { companyId }, orderBy: { name: "asc" } }),
   ]);
 
   // One grouped query rolls up the whole company's schedule so the funded board can render real,
@@ -328,13 +333,42 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
     scheduleByDeal.set(group.fundedDealId, agg);
   }
 
+  // Legacy/imported deals may carry a sheetLabel that was never formally added as a LeadSheet row
+  // (e.g. from a CSV's "Sheet" column). Merge those distinct values in too so they're immediately
+  // filterable/selectable without forcing a one-time cleanup pass.
+  const knownNames = new Set(leadSheets.map((sheet) => sheet.name));
+  const legacyNames = new Set(pipelineDeals.map((deal) => deal.sheetLabel).filter((name) => name && !knownNames.has(name)));
+  const mergedLeadSheets: LeadSheet[] = [
+    ...leadSheets.map(serializeLeadSheet),
+    ...Array.from(legacyNames)
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => ({ id: `legacy:${name}`, name })),
+  ];
+
   return {
     fundedDeals: fundedDeals.map((deal) => serializeFundedDeal(deal, scheduleByDeal.get(deal.id))),
     pipelineDeals: pipelineDeals.map(serializePipelineDeal),
     followUps: followUps.map(serializeFollowUp),
     importBatches: importBatches.map(serializeImportBatch),
+    leadSheets: mergedLeadSheets,
     sourceMode: "database",
   };
+}
+
+/**
+ * Creates a named lead sheet the pipeline board can filter/assign by. Idempotent on name (re-adding
+ * an existing name just returns the existing row) so the "+ New sheet" control never needs to check
+ * for duplicates itself.
+ */
+export async function createLeadSheet(companyId: string, name: string): Promise<LeadSheet> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Lead sheet name cannot be empty.");
+  const record = await prisma.leadSheet.upsert({
+    where: { companyId_name: { companyId, name: trimmed } },
+    create: { companyId, name: trimmed },
+    update: {},
+  });
+  return serializeLeadSheet(record);
 }
 
 export async function loadWorkspaceForUser(userId: string) {
@@ -393,6 +427,11 @@ function fundedUpdateData(patch: Partial<FundedDeal>, userId: string): Prisma.Fu
     ...(patch.relatedDealId !== undefined ? { relatedDeal: patch.relatedDealId ? { connect: { id: patch.relatedDealId } } : { disconnect: true } } : {}),
     ...(patch.psfAmount !== undefined ? { psfAmount: patch.psfAmount } : {}),
     ...(patch.renewalAckAt !== undefined ? { renewalAckAt: patch.renewalAckAt ? new Date(patch.renewalAckAt) : null } : {}),
+    // Lets a renewal mark the original deal it pays off as fully repaid (see the "Renewal of" picker
+    // in views.tsx) using the exact same fields the cron poster sets when a schedule finishes
+    // naturally (schedule-service.ts) -- so the derived "Paid in full" tag/badge just falls out of
+    // the normal progress math instead of needing its own separate flag.
+    ...(patch.scheduleCompletedAt !== undefined ? { scheduleCompletedAt: patch.scheduleCompletedAt ? new Date(patch.scheduleCompletedAt) : null } : {}),
     // balanceOverride* fields are intentionally excluded here: they may only be written through
     // setBalanceOverride/resetBalanceOverride (schedule-service.ts), which enforce an effective
     // date, a reason, and an audit-trail entry. A generic field patch must never bypass that.

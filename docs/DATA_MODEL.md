@@ -109,6 +109,16 @@ schedule has been generated yet.
   deal, so a client's deal history -- a renewal, or an add-on stacked on top of an existing position
   -- is traceable from one record. `updateFundedDeal` rejects a link to a deal outside the caller's
   company or to the deal itself.
+  - Setting `relatedDealId` on a **renewal** additionally patches the linked original deal with
+    `scheduleCompletedAt: now, statusStage: "paid-out"` (client-side, in `FundedDealCard`'s
+    "Renewal of" `onChange` handler), since a renewal pays off the original balance. This reuses the
+    exact fields the cron poster already sets when a schedule finishes naturally
+    (`schedule-service.ts`), so `progressForFundedDeal` treats it as ground truth (100%, zero balance)
+    and the derived "Paid in full" tag/badge fall out of the normal math instead of needing a
+    separate flag. `fundedUpdateData` (`workspace.ts`) had to gain a `scheduleCompletedAt` patch
+    branch for this -- previously only the cron poster ever wrote that column, so no generic-patch
+    path handled it. Only fires forward (on picking a link); clearing or switching a link never
+    un-marks the original deal. Add-on links never do this (an add-on doesn't pay anything off).
 
 ## PSF and Total Payout
 
@@ -344,6 +354,27 @@ The Settings page updates profile and company fields through server actions. Use
 Funded deals use `fundedDate` for month filtering. Pipeline deals use `submittedDate`, which comes from the `Date App` CSV column. Rows without a usable date stay available under an `Unknown date` bucket.
 
 Manual funded and pipeline adds prompt for a date before creating the row. Month filter dropdowns include all months found in data plus the current month and the next 12 months, so future buckets appear as the business grows. Empty stage/tag filter sets mean "show all", not "show none".
+
+## Lead sheets (`LeadSheet`)
+
+A named, reusable, company-scoped lead source a broker builds up once via the Pipeline board's "+"
+control ("Sheet A", "Facebook Leads", ...) and re-selects on every deal that came from it --
+replacing the old free-text "raw status" field on `PipelineDeal` cards.
+
+- `LeadSheet { id, companyId, name, createdAt }`, unique on `(companyId, name)`. `createLeadSheet`
+  (`workspace.ts`) is an upsert on that key, so re-adding an existing name is a no-op that just
+  returns the existing row -- the "+ New sheet" control never needs its own duplicate check.
+- `PipelineDeal.sheetLabel` (unchanged, pre-existing column) stores the assigned sheet by **name**,
+  not a foreign key -- kept denormalized so CSV-imported values and the reusable list can coexist
+  without a migration step, and so a lead's sheet displays even if the `LeadSheet` row is later
+  renamed or removed.
+- `loadWorkspace` returns the merged list: every `LeadSheet` row for the company, plus any distinct
+  `sheetLabel` value already present on a pipeline deal that isn't yet a formal `LeadSheet` row
+  (assigned a synthetic `legacy:<name>` id). This means legacy/imported sheet names are immediately
+  filterable and selectable without a one-time cleanup pass.
+- The client adds sheets optimistically: `addLeadSheet` (state.tsx) inserts `{ id: "pending:<name>",
+  name }` into `data.leadSheets` immediately (keyed on the trimmed name, not the id -- the real id
+  only matters again on the next full reload) and fires `createLeadSheetAction` in the background.
 
 ## Dashboard reminder fields
 

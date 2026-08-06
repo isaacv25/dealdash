@@ -5,6 +5,7 @@ import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal } from "@/lib/
 import {
   createFollowUp,
   createFundedDeal,
+  createLeadSheet,
   createPipelineDeal,
   deleteFollowUp,
   deleteFundedDeal,
@@ -85,6 +86,11 @@ export async function updatePipelineDealAction(id: string, patch: Partial<Pipeli
 export async function deletePipelineDealAction(id: string) {
   const user = await getScopedUser();
   await deletePipelineDeal(user.companyId, id);
+}
+
+export async function createLeadSheetAction(name: string) {
+  const user = await getScopedUser();
+  return createLeadSheet(user.companyId, name);
 }
 
 export async function createFollowUpAction() {

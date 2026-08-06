@@ -62,7 +62,8 @@ dealdash/
 - Gross payback = `fundedAmount * factorRate`, computed in integer cents (`frontend/src/lib/dealdash/finance.ts`) so results never drift from JS float rounding.
 - Progress resolves in a strict priority order (see `docs/DATA_MODEL.md` "Repayment progress priority"): completed-schedule flag, then manual balance override, then **actual cron-posted schedule payments**, then an elapsed-time estimate as the fallback for deals without a generated schedule.
 - Because a generated schedule's posted payments drive the bar, the funded board "automatically updates as the deal is paid" -- the daily cron posts each due payment and the next page load reflects it, no manual balance edits required.
-- The Funded Progress cards are collapsed to a summary (badges, name, funder, funded amount, remaining balance, progress bar) and expand on click to the full inline editor + advanced servicing panel. Numeric fields are free-typing decimal text boxes (`DecimalField`), not spinner inputs, so values like `1.499` or `10.4` type cleanly.
+- The Funded Progress cards are collapsed to a summary (badges, name, funder, funded amount, remaining balance, progress bar) and expand on click to the full inline editor + advanced servicing panel. Numeric fields are free-typing decimal text boxes (`DecimalField`), not spinner inputs, so values like `1.499` or `10.4` type cleanly. The identity grid also has Phone (`PhoneField`) and Email inputs, so a funded deal's contact info is captured right alongside name/business/funder.
+- **Payment $ auto-fills** as Deal Economics fields are edited. `FundedDealCard`'s `updateDealEconomics` recalculates it from `calculateDeal` (funded amount / factor rate / term / frequency) whenever any of those change, for every non-HELOC deal type -- the same math the Advanced panel's "Recalculate schedule" already applied, now live instead of requiring that separate manual step. It's still a free `DecimalField`, so a broker can type over it to match a funder's actual invoice; the override just stays until a trigger field changes again. HELOC's payment stays server-derived (`deriveHelocFields`), untouched by this.
 - Deals with a persisted payment schedule (see below) have a second, more precise balance available in the "Advanced adjustments" panel: calculated from actual posted `PaymentScheduleEntry` rows rather than elapsed-time estimation.
 - Renewal timing defaults to **50%** of the term unless manually overridden (marketed once a deal is roughly half paid down, not near maturity).
 - Every funded deal shows an **expected end date** (its maturity date) -- `expectedEndDateForFundedDeal` (`calculations.ts`) prefers the persisted schedule's real last-payment date (`scheduleEndDate`) and falls back to an estimate computed with the exact same schedule date math when no schedule exists yet, so the date is always available. Rendered with `formatCalendarDate` (UTC) since it's a calendar date.
@@ -78,6 +79,16 @@ linking to an original MCA deal (`relatedDealId`) so a client's history is trace
 Amount/APR/Term-years instead, with its factor-rate-shaped fields derived automatically (see
 `docs/DATA_MODEL.md` "Deal types"). Every deal type also has a PSF $ field, paid out at the broker
 split % alongside commission, tallied as Total Payout. See `docs/DATA_MODEL.md` for the full model.
+
+**A Renewal pays off the deal it renews.** The moment a Renewal-type deal is linked to an original
+deal via "Renewal of", the original deal is marked fully repaid: `scheduleCompletedAt` is set to now
+and `statusStage` to `"paid-out"` -- the exact fields the cron poster sets when a schedule finishes
+naturally (`schedule-service.ts`), so the "Paid in full" tag/badge and 100% progress bar just fall
+out of the normal progress math (`progressForFundedDeal` treats `scheduleCompletedAt` as
+authoritative) rather than needing a separate flag. This only fires forward, when a link is first
+picked -- clearing or changing the link never un-marks the original deal, so it can't silently undo a
+deal's real repayment state. Add-on deals stack on top rather than paying anything off, so linking one
+never marks anything paid.
 
 ## Payment schedule, adjustments, and cron automation
 
@@ -146,9 +157,18 @@ focused on operating reminders.
 - **Stage filters** (labels the broker uses; keys unchanged): New Lead/Missing Statements, Submitted,
   Pending Review, Approved, Contracts Sent, Funded, Declined, Bad Deal/Blacklisted. "renewal" is no
   longer an offered pipeline stage (renewals are tracked on the funded/dashboard side) but stays
-  defined so any legacy record still renders. Leads are always displayed in this stage order.
+  defined so any legacy record still renders.
 - **Search matches any field** on a lead -- business, contact, email, phone, request, city/state, raw
-  status, notes, sheet -- so e.g. "john" finds every John however he appears.
+  status, notes, lead sheet -- so e.g. "john" finds every John however he appears.
+- **Lead sheets** (`LeadSheet` model) are a named, reusable, company-scoped list a broker builds up
+  once ("Sheet A", "Facebook Leads", ...) via the toolbar's "+" control, then re-selects on every deal
+  that came from it -- replacing the old free-text "raw status" field on each card. The toolbar's
+  "Lead sheet" dropdown filters the board by sheet and shows each sheet's deal count inline
+  (`sheetCounts`), so it doubles as a source-of-leads breakdown. Legacy/imported deals whose
+  `sheetLabel` was never formally added as a `LeadSheet` row still show up in the list automatically
+  (`loadWorkspace` merges in any distinct `sheetLabel` values not already present).
+- Leads sort **most recent lead date first** -- a straight recency ranking, not clustered by stage --
+  so the board reads like a feed of what came in, in order.
 - Grouped into **collapsible month sections** keyed by lead/submitted date (newest month first;
   undated leads last), so leads can be tracked, scanned, and picked by the month they came in. Each
   month heading collapses/expands that month's grid; a secondary "Only this / Show all" control
@@ -160,9 +180,10 @@ focused on operating reminders.
   2026") -- so every option filters to real results instead of padding the list with empty future
   months.
 - Within each month section, leads render as one fluid, uniform responsive card grid
-  (`PipelineLeadCard`) rather than uneven per-stage columns, clustered by stage (in pipeline order,
-  newest first within a stage). Each card carries a colored top-border + stage dot
-  (`pipelineStageColor`) so the stage reads at a glance while every field stays inline-editable.
+  (`PipelineLeadCard`). Each card carries a colored top-border + stage dot (`pipelineStageColor`) so
+  the stage reads at a glance while every field stays inline-editable. Phone is a live-formatting
+  `PhoneField` (see "Phone formatting" below). "Next follow-up date" was dropped from the card -- it
+  was never used and the schema field (`nextFollowUpDate`) stays only as a harmless legacy column.
 - The filter bar is a colored, dotted stage rail with live per-stage counts plus an "All leads"
   reset and a "Showing X of Y" summary -- no separate "Stage filters" label.
 - Deletion uses an inline two-step confirm (`InlineDeleteButton`: trash icon → Delete/Cancel),
@@ -170,6 +191,16 @@ focused on operating reminders.
   after a user ticks "don't show again", after which `confirm()` silently returns false and the
   delete never fires -- which is why deleting a lead previously appeared to do nothing. The armed
   state auto-cancels after a few seconds.
+
+## Phone formatting
+
+- Every phone field in the app (Pipeline lead cards, Follow-Ups rows, Funded deal cards) uses the
+  shared `PhoneField` component (`components/dealdash/inputs.tsx`), which live-formats to
+  `(###) ###-####` as digits are typed. The formatting itself is the pure `formatPhoneNumber`
+  helper (`lib/dealdash/format.ts`, tested in `__tests__/format.test.ts`) -- it re-derives the format
+  from whatever digits remain on every keystroke (so typing and backspacing both just work) and also
+  normalizes values imported from CSV in other shapes ("212-555-1234", an 11-digit number with a
+  leading US country code, etc.).
 
 ## Month and date filtering
 
