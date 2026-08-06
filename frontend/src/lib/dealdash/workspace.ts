@@ -84,6 +84,7 @@ function serializeFundedDeal(
     termYears: record.termYears ?? undefined,
     relatedDealId: record.relatedDealId ?? undefined,
     psfAmount: record.psfAmount,
+    renewalAckAt: toIso(record.renewalAckAt),
   };
 }
 
@@ -107,6 +108,7 @@ function serializePipelineDeal(record: Prisma.PipelineDealGetPayload<object>): P
     nextFollowUpDate: toIso(record.nextFollowUpDate),
     sourceLabel: record.sourceLabel,
     deletedAt: toIso(record.deletedAt),
+    statementsAckAt: toIso(record.statementsAckAt),
   };
 }
 
@@ -127,6 +129,8 @@ function serializeFollowUp(record: Prisma.FollowUpItemGetPayload<object>): Follo
     sheetLabel: record.sheetLabel,
     sourceLabel: record.sourceLabel,
     deletedAt: toIso(record.deletedAt),
+    createdAt: toIso(record.createdAt),
+    dashboardAckAt: toIso(record.dashboardAckAt),
   };
 }
 
@@ -388,6 +392,7 @@ function fundedUpdateData(patch: Partial<FundedDeal>, userId: string): Prisma.Fu
     ...(patch.termYears !== undefined ? { termYears: patch.termYears ?? null } : {}),
     ...(patch.relatedDealId !== undefined ? { relatedDeal: patch.relatedDealId ? { connect: { id: patch.relatedDealId } } : { disconnect: true } } : {}),
     ...(patch.psfAmount !== undefined ? { psfAmount: patch.psfAmount } : {}),
+    ...(patch.renewalAckAt !== undefined ? { renewalAckAt: patch.renewalAckAt ? new Date(patch.renewalAckAt) : null } : {}),
     // balanceOverride* fields are intentionally excluded here: they may only be written through
     // setBalanceOverride/resetBalanceOverride (schedule-service.ts), which enforce an effective
     // date, a reason, and an audit-trail entry. A generic field patch must never bypass that.
@@ -413,6 +418,7 @@ function pipelineUpdateData(patch: Partial<PipelineDeal>, userId: string): Prism
     ...(patch.sheetLabel !== undefined ? { sheetLabel: patch.sheetLabel } : {}),
     ...(patch.nextFollowUpDate !== undefined ? { nextFollowUpDate: patch.nextFollowUpDate ? new Date(patch.nextFollowUpDate) : null } : {}),
     ...(patch.sourceLabel !== undefined ? { sourceLabel: patch.sourceLabel } : {}),
+    ...(patch.statementsAckAt !== undefined ? { statementsAckAt: patch.statementsAckAt ? new Date(patch.statementsAckAt) : null } : {}),
   };
 }
 
@@ -432,6 +438,7 @@ function followUpUpdateData(patch: Partial<FollowUpItem>, userId: string): Prism
     ...(patch.completed !== undefined ? { completed: patch.completed } : {}),
     ...(patch.sheetLabel !== undefined ? { sheetLabel: patch.sheetLabel } : {}),
     ...(patch.sourceLabel !== undefined ? { sourceLabel: patch.sourceLabel } : {}),
+    ...(patch.dashboardAckAt !== undefined ? { dashboardAckAt: patch.dashboardAckAt ? new Date(patch.dashboardAckAt) : null } : {}),
   };
 }
 

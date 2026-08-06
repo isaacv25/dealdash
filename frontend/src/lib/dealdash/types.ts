@@ -74,6 +74,8 @@ export interface FundedDeal {
   relatedDealId?: string;
   /** Flat-dollar Processing/Service Fee; payout = psfAmount * commissionPercent, for every deal type. */
   psfAmount: number;
+  /** When the deal was dismissed from the dashboard's "Upcoming renewals" quick view (35%+ paid). */
+  renewalAckAt?: string;
   balanceOverrideAmount?: number;
   balanceOverrideEffectiveDate?: string;
   balanceOverrideReason?: string;
@@ -100,6 +102,8 @@ export interface PipelineDeal {
   nextFollowUpDate?: string;
   sourceLabel: string;
   deletedAt?: string;
+  /** When the "Need New Statements" dashboard reminder was last acknowledged (monthly cadence). */
+  statementsAckAt?: string;
 }
 
 export interface FollowUpItem {
@@ -118,6 +122,10 @@ export interface FollowUpItem {
   sheetLabel: string;
   sourceLabel: string;
   deletedAt?: string;
+  /** DB creation time, surfaced so the dashboard can show a follow-up ~1 month after it was added. */
+  createdAt?: string;
+  /** When this item was dismissed from the dashboard's "Upcoming follow-ups" quick view. */
+  dashboardAckAt?: string;
 }
 
 export type TrashRecordType = "funded" | "pipeline" | "follow-up";

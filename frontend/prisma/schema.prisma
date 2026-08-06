@@ -112,6 +112,10 @@ model FundedDeal {
   // across every deal type. commissionAmount + (psfAmount * commissionPercent) = total payout.
   psfAmount Float @default(0)
 
+  // When the user dismissed this deal from the dashboard's "Upcoming renewals" quick view (a deal
+  // becomes a renewal candidate once it's 35%+ paid in). Null = still eligible to surface there.
+  renewalAckAt DateTime?
+
   // Weekday selected for weekly payment schedules (0 = Sunday .. 6 = Saturday). Null until a
   // schedule has been generated, at which point it is required for weekly-frequency deals.
   paymentWeekday Int?
@@ -267,6 +271,10 @@ model PipelineDeal {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
+  // When the user last acknowledged the dashboard's "Need New Statements" reminder for this lead.
+  // The reminder is monthly, so it re-surfaces once a later month begins; null = never acknowledged.
+  statementsAckAt DateTime?
+
   @@index([companyId, stage])
   @@index([companyId, deletedAt])
 }
@@ -295,6 +303,10 @@ model FollowUpItem {
   deletedAt        DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+
+  // When the user dismissed this item from the dashboard's "Upcoming follow-ups" quick view. It
+  // still lives on the Follow-Ups sheet; this only silences the dashboard reminder. Null = active.
+  dashboardAckAt DateTime?
 
   @@index([companyId, completed])
   @@index([companyId, deletedAt])
