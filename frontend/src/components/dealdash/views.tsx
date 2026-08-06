@@ -590,7 +590,10 @@ function ReminderRail({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col rounded-[1.6rem] bg-white/76 p-5">
+    {/* min-w-0: as a grid item this rail defaults to min-width:auto and would size to its
+        widest child, so the truncating rows below compute against max-content and overflow the
+        viewport on mobile. min-w-0 lets the rail shrink to its grid track so truncation works. */}
+    <div className="flex min-w-0 flex-col rounded-[1.6rem] bg-white/76 p-5">
       <div className="mb-3 flex items-center gap-2.5">
         {icon}
         <h3 className="text-base font-semibold">{title}</h3>
