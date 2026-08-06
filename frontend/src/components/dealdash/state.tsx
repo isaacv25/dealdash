@@ -4,6 +4,7 @@ import { createContext, startTransition, useContext, useRef, useState } from "re
 import {
   createFollowUpAction,
   createFundedDealAction,
+  createLeadSheetAction,
   createPipelineDealAction,
   deleteFollowUpAction,
   deleteFundedDealAction,
@@ -28,6 +29,7 @@ interface DealdashContextValue {
   addPipelineDeal: (submittedDate?: string) => void;
   updatePipelineDeal: (id: string, patch: Partial<PipelineDeal>) => void;
   deletePipelineDeal: (id: string) => void;
+  addLeadSheet: (name: string) => void;
   addFollowUp: () => void;
   updateFollowUp: (id: string, patch: Partial<FollowUpItem>) => void;
   deleteFollowUp: (id: string) => void;
@@ -130,6 +132,22 @@ export function DealdashProvider({ initialData, viewer, children }: Readonly<{ i
       setData((current) => ({ ...current, pipelineDeals: current.pipelineDeals.filter((deal) => deal.id !== id) }));
       startTransition(() => {
         void deletePipelineDealAction(id).catch((error) => logPersistFailure("pipeline deal delete", error));
+      });
+    },
+    addLeadSheet(name) {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      // Optimistic add keyed on name (not id) -- callers assign the deal's sheetLabel to this same
+      // trimmed name immediately, so the round-trip's real id only matters on the next full reload.
+      setData((current) => {
+        if (current.leadSheets.some((sheet) => sheet.name === trimmed)) return current;
+        return {
+          ...current,
+          leadSheets: [...current.leadSheets, { id: `pending:${trimmed}`, name: trimmed }].sort((a, b) => a.name.localeCompare(b.name)),
+        };
+      });
+      startTransition(() => {
+        void createLeadSheetAction(trimmed).catch((error) => logPersistFailure("lead sheet creation", error));
       });
     },
     addFollowUp() {

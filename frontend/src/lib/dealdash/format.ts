@@ -47,3 +47,19 @@ export function toDateInput(value?: string) {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
 }
+
+/**
+ * Formats a phone number as (###) ###-#### purely from its digits, regardless of how those digits
+ * are currently separated -- so it works both live (reformatting on every keystroke in PhoneField)
+ * and once, on values imported from CSV in other shapes ("212-555-1234", "1 212 555 1234", plain
+ * digits, ...). A leading "1" on an 11-digit number is treated as a US country code and dropped.
+ */
+export function formatPhoneNumber(raw: string): string {
+  let digits = (raw || "").replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) digits = digits.slice(1);
+  digits = digits.slice(0, 10);
+  if (!digits) return "";
+  if (digits.length < 4) return `(${digits}`;
+  if (digits.length < 7) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}

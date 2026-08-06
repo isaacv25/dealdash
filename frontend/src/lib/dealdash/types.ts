@@ -150,11 +150,20 @@ export interface ImportBatch {
   notes?: string;
 }
 
+/** A named, reusable lead source ("Sheet A", "Facebook Leads", ...) pipeline deals can be tagged
+ *  with -- created once via the pipeline board's "+ New sheet" control, then re-selected on every
+ *  deal that came from it. */
+export interface LeadSheet {
+  id: string;
+  name: string;
+}
+
 export interface SeedDataset {
   fundedDeals: FundedDeal[];
   pipelineDeals: PipelineDeal[];
   followUps: FollowUpItem[];
   importBatches: ImportBatch[];
+  leadSheets: LeadSheet[];
   sourceMode: "csv" | "sample" | "database";
 }
 

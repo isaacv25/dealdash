@@ -29,8 +29,15 @@ import type { FollowUpItem, FundedDeal, FundedDealType, FundedTag, PipelineDeal,
 import { CalendarClock, Check, ChevronDown, Copy, Download, Eye, EyeOff, FileClock, Plus, RefreshCcw, Trash2, X } from "lucide-react";
 import { useDealdash } from "./state";
 import { formatCurrency, formatCalendarDate, formatDate, dateInputToIso, toDateInput } from "@/lib/dealdash/format";
-import { MAX_SYNDICATION_PERCENT, MIN_SYNDICATION_PERCENT, normalizeSyndicationPercent, termUnitForFrequency } from "@/lib/dealdash/finance";
-import { DecimalField } from "./inputs";
+import {
+  calculateDeal,
+  MAX_SYNDICATION_PERCENT,
+  MIN_FACTOR_RATE,
+  MIN_SYNDICATION_PERCENT,
+  normalizeSyndicationPercent,
+  termUnitForFrequency,
+} from "@/lib/dealdash/finance";
+import { DecimalField, PhoneField } from "./inputs";
 import { FundedDealAdvancedPanel } from "./funded-deal-panel";
 
 // ─── formatters ──────────────────────────────────────────────────────────────
@@ -86,11 +93,6 @@ const pipelineStageColor: Record<PipelineStage, string> = {
   dead: "#475569",
   renewal: "var(--accent)",
 };
-
-// Pipeline order used to cluster same-stage leads together in the single fluid grid.
-const stageOrder: Record<PipelineStage, number> = Object.fromEntries(stages.map((s, i) => [s.key, i] as const)) as Record<PipelineStage, number>;
-// A stage no longer in the standard list (e.g. legacy "renewal") sorts to the end rather than NaN.
-const orderForStage = (stage: PipelineStage) => stageOrder[stage] ?? stages.length;
 
 const fundedTagOptions: Array<{ key: FundedTag; label: string }> = [
   { key: "clawback", label: "Clawback" },
@@ -879,15 +881,37 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
   const payback = grossPaybackFromDeal(deal);
   const balance = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining ?? progress.balanceRemaining;
 
-  /** When funded amount, house points %, or broker split % changes, auto-calc commission $. */
-  function updateWithCommissionCalc(patch: Partial<FundedDeal>) {
+  /**
+   * Central handler for the Deal Economics + Commission Model fields. Recalculates commission $
+   * (from funded amount / house pts % / broker split %) exactly as before, and now also recalculates
+   * the scheduled Payment $ (from funded amount / factor rate / term / frequency) using the same
+   * calculateDeal math the Advanced panel's "Recalculate schedule" already applies -- so Payment $
+   * auto-fills live in Deal Economics instead of requiring that separate manual step. HELOC payment
+   * is derived server-side (deriveHelocFields) and left untouched here.
+   */
+  function updateDealEconomics(patch: Partial<FundedDeal>) {
     const nextDeal = { ...deal, ...patch };
-    const calcComm = nextDeal.fundedAmount * nextDeal.housePointsPercent * nextDeal.commissionPercent;
-    const shouldRecalc = "housePointsPercent" in patch || "commissionPercent" in patch || "fundedAmount" in patch;
-    updateFundedDeal(deal.id, {
-      ...patch,
-      ...(shouldRecalc && nextDeal.housePointsPercent > 0 ? { commissionAmount: calcComm } : {}),
-    });
+    const derived: Partial<FundedDeal> = {};
+
+    const commissionInputsChanged = "housePointsPercent" in patch || "commissionPercent" in patch || "fundedAmount" in patch;
+    if (commissionInputsChanged && nextDeal.housePointsPercent > 0) {
+      derived.commissionAmount = nextDeal.fundedAmount * nextDeal.housePointsPercent * nextDeal.commissionPercent;
+    }
+
+    const paymentInputsChanged =
+      "fundedAmount" in patch || "factorRate" in patch || "termValue" in patch || "paymentFrequency" in patch;
+    if (paymentInputsChanged && nextDeal.dealType !== "heloc" && nextDeal.factorRate >= MIN_FACTOR_RATE && nextDeal.termValue > 0) {
+      const calc = calculateDeal({
+        fundedAmount: nextDeal.fundedAmount,
+        factorRate: nextDeal.factorRate,
+        termValue: nextDeal.termValue,
+        paymentFrequency: nextDeal.paymentFrequency,
+        syndicationPercent: nextDeal.syndicationPercent * 100,
+      });
+      derived.paymentAmount = calc.scheduledPaymentDollars;
+    }
+
+    updateFundedDeal(deal.id, { ...patch, ...derived });
   }
 
   const progressFillClass =
@@ -1021,6 +1045,23 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                   placeholder="Funder"
                 />
               </DealField>
+              <DealField label="Phone">
+                <PhoneField
+                  value={deal.phone || ""}
+                  onChange={(next) => updateFundedDeal(deal.id, { phone: next })}
+                  className="w-full"
+                  ariaLabel={`Phone for ${deal.businessName || "deal"}`}
+                />
+              </DealField>
+              <DealField label="Email">
+                <input
+                  className="field w-full text-sm"
+                  value={deal.email || ""}
+                  onChange={(e) => updateFundedDeal(deal.id, { email: e.target.value })}
+                  placeholder="Email"
+                  type="email"
+                />
+              </DealField>
             </div>
 
             {/* Renewal/Add-on: link back to the original MCA deal so a client's history is traceable */}
@@ -1030,7 +1071,19 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                   <select
                     className="field w-full text-sm"
                     value={deal.relatedDealId || ""}
-                    onChange={(e) => updateFundedDeal(deal.id, { relatedDealId: e.target.value || undefined })}
+                    onChange={(e) => {
+                      const relatedDealId = e.target.value || undefined;
+                      updateFundedDeal(deal.id, { relatedDealId });
+                      // A renewal pays off the original deal's balance, so linking one marks that
+                      // original deal fully repaid -- the same scheduleCompletedAt/statusStage the
+                      // cron poster sets when a normal schedule finishes naturally (schedule-service.ts).
+                      // Add-ons stack on top rather than paying anything off, so this only applies to
+                      // dealType "renewal". Only fires forward (on picking a link), never on clearing
+                      // or switching one, so it can't silently undo a deal's real repayment state.
+                      if (deal.dealType === "renewal" && relatedDealId) {
+                        updateFundedDeal(relatedDealId, { scheduleCompletedAt: new Date().toISOString(), statusStage: "paid-out" });
+                      }
+                    }}
                   >
                     <option value="">— Not linked —</option>
                     {allDeals
@@ -1057,7 +1110,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                 <DealField label="Amount">
                   <DecimalField
                     value={deal.fundedAmount}
-                    onCommit={(next) => updateWithCommissionCalc({ fundedAmount: next })}
+                    onCommit={(next) => updateDealEconomics({ fundedAmount: next })}
                     suffix="$"
                     min={0}
                     placeholder="0"
@@ -1102,7 +1155,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                 <DealField label="Funded $">
                   <DecimalField
                     value={deal.fundedAmount}
-                    onCommit={(next) => updateWithCommissionCalc({ fundedAmount: next })}
+                    onCommit={(next) => updateDealEconomics({ fundedAmount: next })}
                     suffix="$"
                     min={0}
                     placeholder="0"
@@ -1112,7 +1165,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                 <DealField label="Factor Rate">
                   <DecimalField
                     value={deal.factorRate}
-                    onCommit={(next) => updateFundedDeal(deal.id, { factorRate: next })}
+                    onCommit={(next) => updateDealEconomics({ factorRate: next })}
                     min={0}
                     decimals={4}
                     placeholder="1.35"
@@ -1127,7 +1180,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                       const frequency = e.target.value as FundedDeal["paymentFrequency"];
                       // Term unit always tracks payment frequency so a mismatched pair (e.g. "weekly"
                       // payments over a "months" term) can never be saved.
-                      updateFundedDeal(deal.id, { paymentFrequency: frequency, termUnit: termUnitForFrequency(frequency) });
+                      updateDealEconomics({ paymentFrequency: frequency, termUnit: termUnitForFrequency(frequency) });
                     }}
                   >
                     <option value="daily">Daily</option>
@@ -1142,7 +1195,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                     min={1}
                     step={1}
                     value={deal.termValue || ""}
-                    onChange={(e) => updateFundedDeal(deal.id, { termValue: Math.max(0, Math.trunc(Number(e.target.value) || 0)) })}
+                    onChange={(e) => updateDealEconomics({ termValue: Math.max(0, Math.trunc(Number(e.target.value) || 0)) })}
                     placeholder="0"
                   />
                 </DealField>
@@ -1153,7 +1206,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                     suffix="$"
                     min={0}
                     placeholder="0"
-                    ariaLabel={`Payment amount for ${deal.businessName || "deal"}`}
+                    ariaLabel={`Payment amount for ${deal.businessName || "deal"} (auto-calculated from funded amount, factor rate, and term -- edit to override)`}
                   />
                 </DealField>
               </div>
@@ -1168,7 +1221,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
               <DealField label="House Pts %">
                 <DecimalField
                   value={deal.housePointsPercent * 100}
-                  onCommit={(next) => updateWithCommissionCalc({ housePointsPercent: next / 100 })}
+                  onCommit={(next) => updateDealEconomics({ housePointsPercent: next / 100 })}
                   suffix="%"
                   min={0}
                   placeholder="e.g. 9"
@@ -1183,7 +1236,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
               <DealField label="Broker Split %">
                 <DecimalField
                   value={deal.commissionPercent * 100}
-                  onCommit={(next) => updateWithCommissionCalc({ commissionPercent: next / 100 })}
+                  onCommit={(next) => updateDealEconomics({ commissionPercent: next / 100 })}
                   suffix="%"
                   min={0}
                   placeholder="e.g. 30"
@@ -1312,9 +1365,11 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
 // ─── Pipeline ─────────────────────────────────────────────────────────────────
 
 export function PipelineView() {
-  const { data, addPipelineDeal } = useDealdash();
+  const { data, addPipelineDeal, addLeadSheet } = useDealdash();
   const [query, setQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState("all");
+  const [activeSheet, setActiveSheet] = useState("all");
+  const [addingSheet, setAddingSheet] = useState(false);
   const [newPipelineDate, setNewPipelineDate] = useState(todayDateInput());
   const [activeStages, setActiveStages] = useState<Set<PipelineStage>>(new Set());
   const deferredQuery = useDeferredValue(query);
@@ -1330,6 +1385,17 @@ export function PipelineView() {
     return counts;
   }, [data.pipelineDeals]);
 
+  // How many deals came in from each lead sheet -- shown inline in the filter dropdown so the sheet
+  // list doubles as a source-of-leads breakdown, not just a filter.
+  const sheetCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const deal of data.pipelineDeals) {
+      if (!deal.sheetLabel) continue;
+      counts.set(deal.sheetLabel, (counts.get(deal.sheetLabel) ?? 0) + 1);
+    }
+    return counts;
+  }, [data.pipelineDeals]);
+
   const query_ = deferredQuery.trim().toLowerCase();
   const filtered = useMemo(
     () =>
@@ -1338,6 +1404,7 @@ export function PipelineView() {
           (deal) =>
             (activeMonth === "all" || getMonthKey(deal.submittedDate) === activeMonth) &&
             (activeStages.size === 0 || activeStages.has(deal.stage)) &&
+            (activeSheet === "all" || deal.sheetLabel === activeSheet) &&
             // Search matches ANY text field on the lead -- name, business, contact, email, phone,
             // request, city/state, raw status, notes, sheet -- so "john" finds every John however
             // he appears.
@@ -1359,13 +1426,10 @@ export function PipelineView() {
                 .toLowerCase()
                 .includes(query_)),
         )
-        // Within each month section the leads are clustered by stage (pipeline order), newest first
-        // within a stage, so each month still reads as an ordered flow rather than a random pile.
-        .sort((a, b) => {
-          const byStage = orderForStage(a.stage) - orderForStage(b.stage);
-          return byStage !== 0 ? byStage : (b.submittedDate ?? "").localeCompare(a.submittedDate ?? "");
-        }),
-    [data.pipelineDeals, query_, activeStages, activeMonth],
+        // Most recent lead date first within each month -- a straight recency ranking rather than
+        // clustering by stage, so the board reads as "what came in, in order" like a feed.
+        .sort((a, b) => (b.submittedDate ?? "").localeCompare(a.submittedDate ?? "")),
+    [data.pipelineDeals, query_, activeStages, activeMonth, activeSheet],
   );
 
   // Group the filtered leads into month sections (keyed by lead/submitted date) so the board can be
@@ -1392,13 +1456,13 @@ export function PipelineView() {
     });
   }
 
-  const hasFilters = activeStages.size > 0 || activeMonth !== "all" || query.length > 0;
+  const hasFilters = activeStages.size > 0 || activeMonth !== "all" || activeSheet !== "all" || query.length > 0;
 
   return (
     <SectionFrame
       eyebrow="Deals Brought In"
       title="Pipeline board"
-      copy="Search, filter by stage, and keep every file moving. Changes save to your workspace automatically."
+      copy="Search, filter by stage or lead sheet, and keep every file moving. Changes save to your workspace automatically."
       actions={
         <div className="flex flex-wrap gap-3">
           <input
@@ -1419,6 +1483,39 @@ export function PipelineView() {
               </option>
             ))}
           </select>
+          <div className="flex items-center gap-1.5">
+            <select
+              className="field max-h-64 min-w-[170px] text-sm"
+              value={activeSheet}
+              onChange={(e) => setActiveSheet(e.target.value)}
+              aria-label="Filter by lead sheet"
+            >
+              <option value="all">All lead sheets</option>
+              {data.leadSheets.map((sheet) => (
+                <option key={sheet.id} value={sheet.name}>
+                  {sheet.name} ({sheetCounts.get(sheet.name) ?? 0})
+                </option>
+              ))}
+            </select>
+            {addingSheet ? (
+              <InlineAddSheetForm
+                onSave={(name) => {
+                  addLeadSheet(name);
+                  setAddingSheet(false);
+                }}
+                onCancel={() => setAddingSheet(false)}
+              />
+            ) : (
+              <button
+                type="button"
+                className="ghost-button px-2.5 py-1.5 text-xs"
+                title="Add a new lead sheet"
+                onClick={() => setAddingSheet(true)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
             New lead date
             <input
@@ -1475,6 +1572,7 @@ export function PipelineView() {
             onClick={() => {
               setActiveStages(new Set());
               setActiveMonth("all");
+              setActiveSheet("all");
               setQuery("");
             }}
             type="button"
@@ -1507,6 +1605,88 @@ export function PipelineView() {
         </div>
       )}
     </SectionFrame>
+  );
+}
+
+/**
+ * A tiny inline text field + save/cancel used wherever a brand-new lead sheet name can be typed
+ * (the toolbar's "+" and each card's "Add new sheet..." option). Auto-focused since it only ever
+ * appears in response to a direct click.
+ */
+function InlineAddSheetForm({ onSave, onCancel }: { onSave: (name: string) => void; onCancel: () => void }) {
+  const [name, setName] = useState("");
+
+  function save() {
+    if (name.trim()) onSave(name.trim());
+    else onCancel();
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        autoFocus
+        className="field !py-1.5 text-xs"
+        style={{ minWidth: 140 }}
+        value={name}
+        placeholder="New sheet name"
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") save();
+          if (e.key === "Escape") onCancel();
+        }}
+        onBlur={save}
+      />
+    </span>
+  );
+}
+
+/**
+ * Assigns a lead's Lead Sheet from the shared, reusable list (data.leadSheets) -- replaces the old
+ * free-text "raw status" field. Selecting "+ Add new sheet..." swaps to InlineAddSheetForm, which
+ * both creates the sheet (so it's selectable on every future deal) and assigns it to this deal in
+ * one save.
+ */
+function LeadSheetPicker({ dealId, value, ariaLabel }: { dealId: string; value: string; ariaLabel: string }) {
+  const { data, updatePipelineDeal, addLeadSheet } = useDealdash();
+  const [adding, setAdding] = useState(false);
+
+  if (adding) {
+    return (
+      <InlineAddSheetForm
+        onSave={(name) => {
+          addLeadSheet(name);
+          updatePipelineDeal(dealId, { sheetLabel: name });
+          setAdding(false);
+        }}
+        onCancel={() => setAdding(false)}
+      />
+    );
+  }
+
+  return (
+    <select
+      className="field text-sm"
+      value={value}
+      onChange={(e) => {
+        if (e.target.value === "__add__") {
+          setAdding(true);
+          return;
+        }
+        updatePipelineDeal(dealId, { sheetLabel: e.target.value });
+      }}
+      aria-label={ariaLabel}
+    >
+      <option value="">No sheet</option>
+      {/* A value not yet in the shared list (legacy/imported data) still shows so it's never silently
+          dropped from the dropdown the moment this card renders. */}
+      {value && !data.leadSheets.some((sheet) => sheet.name === value) && <option value={value}>{value}</option>}
+      {data.leadSheets.map((sheet) => (
+        <option key={sheet.id} value={sheet.name}>
+          {sheet.name}
+        </option>
+      ))}
+      <option value="__add__">+ Add new sheet...</option>
+    </select>
   );
 }
 
@@ -1615,11 +1795,10 @@ function PipelineLeadCard({ deal, index }: { deal: PipelineDeal; index: number }
 
       {/* Contact */}
       <div className="grid grid-cols-2 gap-2">
-        <input
-          className="field text-sm"
+        <PhoneField
           value={deal.phone || ""}
-          onChange={(e) => updatePipelineDeal(deal.id, { phone: e.target.value })}
-          placeholder="Phone"
+          onChange={(next) => updatePipelineDeal(deal.id, { phone: next })}
+          ariaLabel={`Phone for ${deal.businessName || "lead"}`}
         />
         <input
           className="field text-sm"
@@ -1630,7 +1809,7 @@ function PipelineLeadCard({ deal, index }: { deal: PipelineDeal; index: number }
         />
       </div>
 
-      {/* Request + raw status */}
+      {/* Request + lead sheet */}
       <div className="grid grid-cols-2 gap-2">
         <input
           className="field text-sm"
@@ -1638,12 +1817,7 @@ function PipelineLeadCard({ deal, index }: { deal: PipelineDeal; index: number }
           onChange={(e) => updatePipelineDeal(deal.id, { requestLabel: e.target.value })}
           placeholder="Request, e.g. 100k"
         />
-        <input
-          className="field text-sm"
-          value={deal.statusRaw}
-          onChange={(e) => updatePipelineDeal(deal.id, { statusRaw: e.target.value })}
-          placeholder="Raw status"
-        />
+        <LeadSheetPicker dealId={deal.id} value={deal.sheetLabel} ariaLabel={`Lead sheet for ${deal.businessName || "lead"}`} />
       </div>
 
       {/* Notes */}
@@ -1654,27 +1828,16 @@ function PipelineLeadCard({ deal, index }: { deal: PipelineDeal; index: number }
         placeholder="Notes"
       />
 
-      {/* Dates */}
-      <div className="grid grid-cols-2 gap-2">
-        <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-          Lead date
-          <input
-            className="field text-sm font-normal normal-case"
-            type="date"
-            value={toDateInput(deal.submittedDate)}
-            onChange={(e) => updatePipelineDeal(deal.id, { submittedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
-          />
-        </label>
-        <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-          Next follow-up
-          <input
-            className="field text-sm font-normal normal-case"
-            type="date"
-            value={toDateInput(deal.nextFollowUpDate)}
-            onChange={(e) => updatePipelineDeal(deal.id, { nextFollowUpDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
-          />
-        </label>
-      </div>
+      {/* Date */}
+      <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+        Lead date
+        <input
+          className="field text-sm font-normal normal-case"
+          type="date"
+          value={toDateInput(deal.submittedDate)}
+          onChange={(e) => updatePipelineDeal(deal.id, { submittedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
+        />
+      </label>
     </article>
   );
 }
@@ -1801,11 +1964,11 @@ export function FollowUpsView() {
 
             <div className="grid gap-2">
               <div className="flex gap-2">
-                <input
-                  className="field flex-1 text-sm"
+                <PhoneField
                   value={item.phone || ""}
-                  onChange={(e) => updateFollowUp(item.id, { phone: e.target.value })}
-                  placeholder="Phone"
+                  onChange={(next) => updateFollowUp(item.id, { phone: next })}
+                  className="flex-1"
+                  ariaLabel={`Phone for ${item.businessName || "follow-up"}`}
                 />
                 <button
                   className="icon-button h-[44px] w-[44px] shrink-0"

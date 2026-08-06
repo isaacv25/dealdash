@@ -79,7 +79,7 @@ export async function loadSeedDataset(): Promise<SeedDataset> {
   }
 
   if (fundedDeals.length || pipelineDeals.length || followUps.length) {
-    return { fundedDeals, pipelineDeals, followUps, importBatches, sourceMode: "csv" };
+    return { fundedDeals, pipelineDeals, followUps, importBatches, leadSheets: [], sourceMode: "csv" };
   }
 
   // Vercel fallback — real hardcoded dataset
@@ -473,7 +473,7 @@ export function createRealDataset(): SeedDataset {
     { id: "import-contacts-seed", filename: "Contacted Leads - Sheet1.csv", importType: "follow-up", rowsImported: followUps.length, rowsSkipped: 0, detectedColumns: ["Full name","Number","Email","Business Name","Request","Notes","Monthly","Positions","App","Date Last Contacted","Sheet"], importedAt: new Date().toISOString() },
   ];
 
-  return { fundedDeals, pipelineDeals, followUps, importBatches, sourceMode: "csv" };
+  return { fundedDeals, pipelineDeals, followUps, importBatches, leadSheets: [], sourceMode: "csv" };
 }
 
 // ── Helper: build a PipelineDeal via normalization ───────────────────────────

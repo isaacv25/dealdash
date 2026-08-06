@@ -16,6 +16,7 @@ model Company {
   pipelineDeals PipelineDeal[]
   followUps     FollowUpItem[]
   importBatches ImportBatch[]
+  leadSheets    LeadSheet[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 }
@@ -310,6 +311,23 @@ model FollowUpItem {
 
   @@index([companyId, completed])
   @@index([companyId, deletedAt])
+}
+
+/**
+ * A named, reusable lead source ("Sheet A", "Facebook Leads", ...) a broker can attach to pipeline
+ * deals. Kept as its own small table (rather than only a free-text column on PipelineDeal) so a
+ * sheet can be created once via the "+" control and then re-selected on every deal that came from
+ * it, and so the board can filter/count by sheet even before any deal has been assigned to it yet.
+ */
+model LeadSheet {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, name])
+  @@index([companyId])
 }
 
 model ImportBatch {
