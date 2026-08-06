@@ -184,6 +184,10 @@ textarea {
 .app-grid {
   display: grid;
   gap: 1.25rem;
+  /* Single stacked column on mobile. minmax(0, 1fr) (not the implicit `auto`) lets grid
+     items shrink below their content's intrinsic width, so wide children -- the nav strip,
+     tables, month grids -- stay inside the viewport instead of forcing horizontal scroll. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 @media (min-width: 1024px) {
