@@ -155,18 +155,28 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
   }
 
   // When a persisted schedule exists (workspace loader attaches the aggregate), repayment progress
-  // is driven by *actual* cron-posted payments rather than an elapsed-time estimate. This is what
-  // makes the board "automatically update as the deal is paid" -- each posted payment advances the
-  // bar for real, and the numbers can never drift from the schedule the way the estimate can.
+  // tracks the schedule rather than a loose elapsed-time estimate. Progress is driven by how many
+  // payments are *due by now* per the calendar (duePaymentsCount) -- i.e. what should have been
+  // collected -- so the bar reflects elapsed time immediately, without waiting for the cron poster to
+  // sweep. The actually-posted figures still win whenever they run ahead of the calendar (an early
+  // payoff / EPA), via the max() below, so a deal paid down faster than schedule never reads low.
+  // Note this is deliberately an *expectation*: a merchant who has silently stopped paying still shows
+  // as on-schedule here until a manual balance override (above) corrects it -- matching how a broker
+  // reads the board ("X payments should be in by now") absent contrary info.
   if (deal.scheduledPaymentsCount && deal.scheduledPaymentsCount > 0) {
+    const duePeriods = Math.min(deal.scheduledPaymentsCount, deal.duePaymentsCount ?? 0);
     const postedPeriods = Math.min(deal.scheduledPaymentsCount, deal.postedPaymentsCount ?? 0);
-    const paidAmount = Math.min(grossPayback, deal.postedAmount ?? 0);
+    const completedPeriods = Math.max(duePeriods, postedPeriods);
+
+    const dueAmount = deal.dueAmount ?? 0;
+    const postedAmount = deal.postedAmount ?? 0;
+    const paidAmount = Math.min(grossPayback, Math.max(dueAmount, postedAmount));
     return {
       grossPayback,
       periodicPayment,
       totalPeriods: deal.scheduledPaymentsCount,
-      completedPeriods: postedPeriods,
-      paymentsRemaining: Math.max(0, deal.scheduledPaymentsCount - postedPeriods),
+      completedPeriods,
+      paymentsRemaining: Math.max(0, deal.scheduledPaymentsCount - completedPeriods),
       paidAmount: roundCurrency(paidAmount),
       balanceRemaining: roundCurrency(Math.max(0, grossPayback - paidAmount)),
       progressPercent: grossPayback ? Math.min(100, Math.round((paidAmount / grossPayback) * 100)) : 0,

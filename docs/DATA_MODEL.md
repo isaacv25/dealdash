@@ -136,10 +136,19 @@ this strict order, each step winning over the ones below it:
 1. `scheduleCompletedAt` set -> 100% paid, $0 remaining (cron ground truth).
 2. A manual balance override (`balanceOverrideAmount`, or legacy `manualBalanceRemaining`) -> that
    number is authoritative.
-3. A persisted schedule exists (`scheduledPaymentsCount > 0`) -> progress is driven by the actual
-   posted payments (`postedPaymentsCount` / `postedAmount`). This is what makes the board update as
-   the deal is paid: each cron posting advances the bar for real, and the figures can never drift
-   from the schedule the way the estimate can.
+3. A persisted schedule exists (`scheduledPaymentsCount > 0`) -> progress is driven by payments
+   **due by now** (`duePaymentsCount` / `dueAmount` -- entries whose due date is on or before the
+   current time), i.e. what the calendar says should have been collected, falling back to the
+   actually-posted figures (`postedPaymentsCount` / `postedAmount`) whenever those run ahead (an early
+   payoff / EPA). Concretely the completed count is `max(due, posted)` and the paid amount is
+   `max(dueAmount, postedAmount)` capped at gross payback. This makes the bar reflect elapsed time
+   *immediately* -- a deal with a backdated or freshly-recalculated schedule shows the payments that
+   should already be in, instead of sitting at 0 until the hourly cron sweeps and posts them. The cron
+   posting is still ground truth for the collected balance and for flipping `scheduleCompletedAt`; it
+   just no longer gates whether the progress bar moves. A deal whose merchant has silently stopped
+   paying will read as on-schedule here until a manual balance override (step 2) corrects it.
+   `duePaymentsCount` / `dueAmount` are aggregated by the workspace loader with a second grouped query
+   over entries where `dueDate <= now`.
 4. Otherwise -> the elapsed-time estimate (funded date + cadence + periodic payment), the
    conservative fallback for deals that have no generated schedule yet.
 
