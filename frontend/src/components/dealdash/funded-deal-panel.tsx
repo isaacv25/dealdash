@@ -13,6 +13,7 @@ import {
   getDealCalculatedBalanceAction,
   getDealScheduleAction,
   recastDealScheduleAction,
+  regenerateDealScheduleFromScratchAction,
   resetBalanceOverrideAction,
   setBalanceOverrideAction,
 } from "@/app/(app)/actions";
@@ -186,15 +187,18 @@ export function FundedDealAdvancedPanel({ deal }: { deal: FundedDeal }) {
 
       if (existing.length === 0) {
         await generateDealScheduleAction(deal.id);
+      } else if (!hasPosted) {
+        // Nothing has actually posted yet, so there's no history to preserve -- rebuild anchored to
+        // the deal's real funded date (like a brand-new schedule), not to today. Recasting from today
+        // here would silently push the whole clock out and hide payments that should already be due.
+        await regenerateDealScheduleFromScratchAction(deal.id, "Deal terms recalculated (rebuilt from funding date)");
       } else {
-        if (hasPosted) {
-          const confirmed = window.confirm(
-            "This deal already has posted payments. Recasting will keep all posted history and rebuild only the remaining, unpaid schedule starting today. Continue?",
-          );
-          if (!confirmed) {
-            setBusy(false);
-            return;
-          }
+        const confirmed = window.confirm(
+          "This deal already has posted payments. Recasting will keep all posted history and rebuild only the remaining, unpaid schedule starting today. Continue?",
+        );
+        if (!confirmed) {
+          setBusy(false);
+          return;
         }
         await recastDealScheduleAction(deal.id, new Date().toISOString(), deal.paymentWeekday ?? null, "Deal terms recalculated");
       }

@@ -225,16 +225,29 @@ recast is always "from here forward" on an already-running deal.
 
 ### Recast vs. rebuild
 
+The "Recalculate schedule" button picks one of three paths depending on the deal's current state, so
+that rebuilding a schedule to match edited terms never silently loses real payment history *or*
+silently pushes a never-started deal's whole timeline out to today:
+
 - **Rebuild** (`generateInitialSchedule`): only valid when no schedule rows exist yet for a deal.
-  Generates the full schedule from scratch. As of the deal-types rework, this is also called
-  automatically -- see "Automatic schedule generation" below -- not only via the manual "Recalculate
-  schedule" button.
-- **Recast** (`recastDealSchedule`): the default, safe path once any payment has posted. Every
-  `posted`/`skipped`/`paused` row is preserved exactly as-is; only `pending` rows are deleted and
-  regenerated from an effective date forward, using the deal's current funded amount, factor rate,
-  remaining term, and (for weekly deals) payment weekday. The UI's "Recalculate schedule" button
-  requires an explicit confirmation click before recasting a deal that already has posted payments,
-  so history is never silently rewritten.
+  Generates the full schedule from scratch, anchored to the deal's real funded date. As of the
+  deal-types rework, this is also called automatically -- see "Automatic schedule generation" below --
+  not only via the manual button.
+- **Rebuild from scratch** (`regenerateScheduleFromScratch`): a schedule already exists, but zero
+  entries are `posted` -- i.e. the deal hasn't actually started paying yet, even though it may have
+  been funded weeks ago. There is no history to preserve, so every existing row is deleted and the
+  schedule is rebuilt exactly like a brand-new one, anchored to the deal's real funded date (not
+  today). This exists because naively recasting "from today" here would silently push a schedule that
+  should already be partway through back to square one -- a deal funded three weeks ago with a daily
+  schedule that's never posted anything should come out of a recalculate with ~15 payments already
+  overdue, not with day one starting tomorrow. Throws if any entry is posted, as a safety check.
+- **Recast** (`recastDealSchedule`): once any payment has posted. Every `posted`/`skipped`/`paused`
+  row is preserved exactly as-is; only `pending` rows are deleted and regenerated from an effective
+  date (today) forward, using the deal's current funded amount, factor rate, remaining term, and (for
+  weekly deals) payment weekday. Anchoring the rebuilt remainder to *today* is correct here, unlike the
+  never-started case above, because the deal is genuinely in progress and you don't want to fabricate
+  payments that should already have posted. The UI requires an explicit confirmation click before
+  recasting a deal with posted payments, so history is never silently rewritten.
 
 ### Automatic schedule generation
 

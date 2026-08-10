@@ -31,6 +31,7 @@ import {
   getScheduleForDeal,
   maybeAutoGenerateSchedule,
   recastDealSchedule,
+  regenerateScheduleFromScratch,
   resetBalanceOverride,
   setBalanceOverride,
 } from "@/lib/dealdash/schedule-service";
@@ -170,6 +171,12 @@ export async function recastDealScheduleAction(dealId: string, effectiveDateIso:
     userId: user.id,
     reason: reason || "Deal terms changed",
   });
+}
+
+export async function regenerateDealScheduleFromScratchAction(dealId: string, reason: string) {
+  const user = await getScopedUser();
+  await requireOwnedFundedDeal(user.companyId, dealId);
+  return regenerateScheduleFromScratch(dealId, { userId: user.id, reason: reason || "Deal terms recalculated" });
 }
 
 export async function applyLoweredPaymentAction(
