@@ -43,10 +43,10 @@ function deal(overrides: Partial<FundedDeal> = {}): FundedDeal {
   };
 }
 
-test("progress is driven by actually-posted schedule payments when a schedule exists", () => {
-  // 6 of 20 payments posted, $21,000 collected of $70,000.
+test("progress tracks payments due by now when the schedule matches (cron caught up)", () => {
+  // 6 of 20 payments due AND posted, $21,000 of $70,000.
   const result = progressForFundedDeal(
-    deal({ scheduledPaymentsCount: 20, postedPaymentsCount: 6, postedAmount: 21000 }),
+    deal({ scheduledPaymentsCount: 20, duePaymentsCount: 6, dueAmount: 21000, postedPaymentsCount: 6, postedAmount: 21000 }),
   );
   assert.equal(result.totalPeriods, 20);
   assert.equal(result.completedPeriods, 6);
@@ -56,17 +56,40 @@ test("progress is driven by actually-posted schedule payments when a schedule ex
   assert.equal(result.progressPercent, 30);
 });
 
+test("progress reflects elapsed schedule even when the cron has posted nothing yet", () => {
+  // 12 of 20 payments are due by the calendar, but the cron poster has posted zero. The bar must
+  // still show 12/20 (60%), not sit at 0 -- this is the Texas-Fence-Pro backdated-schedule case.
+  const result = progressForFundedDeal(
+    deal({ scheduledPaymentsCount: 20, duePaymentsCount: 12, dueAmount: 42000, postedPaymentsCount: 0, postedAmount: 0 }),
+  );
+  assert.equal(result.completedPeriods, 12);
+  assert.equal(result.paymentsRemaining, 8);
+  assert.equal(result.paidAmount, 42000);
+  assert.equal(result.balanceRemaining, 28000);
+  assert.equal(result.progressPercent, 60);
+});
+
+test("actually-posted figures win when they run ahead of the calendar (early payoff / EPA)", () => {
+  // Only 6 due by the calendar, but 10 have actually posted (merchant paying ahead) -> show 10.
+  const result = progressForFundedDeal(
+    deal({ scheduledPaymentsCount: 20, duePaymentsCount: 6, dueAmount: 21000, postedPaymentsCount: 10, postedAmount: 35000 }),
+  );
+  assert.equal(result.completedPeriods, 10);
+  assert.equal(result.paidAmount, 35000);
+  assert.equal(result.progressPercent, 50);
+});
+
 test("a manual balance override still wins over the schedule aggregate", () => {
   const result = progressForFundedDeal(
-    deal({ scheduledPaymentsCount: 20, postedPaymentsCount: 6, postedAmount: 21000, balanceOverrideAmount: 10000 }),
+    deal({ scheduledPaymentsCount: 20, duePaymentsCount: 6, dueAmount: 21000, postedPaymentsCount: 6, postedAmount: 21000, balanceOverrideAmount: 10000 }),
   );
   assert.equal(result.usesManualBalance, true);
   assert.equal(result.balanceRemaining, 10000);
 });
 
-test("scheduleCompletedAt forces 100% regardless of the posted aggregate", () => {
+test("scheduleCompletedAt forces 100% regardless of the schedule aggregate", () => {
   const result = progressForFundedDeal(
-    deal({ scheduledPaymentsCount: 20, postedPaymentsCount: 19, postedAmount: 66500, scheduleCompletedAt: "2026-07-01T00:00:00.000Z" }),
+    deal({ scheduledPaymentsCount: 20, duePaymentsCount: 19, dueAmount: 66500, postedPaymentsCount: 19, postedAmount: 66500, scheduleCompletedAt: "2026-07-01T00:00:00.000Z" }),
   );
   assert.equal(result.progressPercent, 100);
   assert.equal(result.balanceRemaining, 0);

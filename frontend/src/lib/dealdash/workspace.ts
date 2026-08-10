@@ -30,6 +30,9 @@ interface ScheduleAggregate {
   scheduledPaymentsCount: number;
   postedPaymentsCount: number;
   postedAmountCents: number;
+  /** Entries whose due date has arrived (dueDate <= now), whether or not the cron has posted them. */
+  duePaymentsCount: number;
+  dueAmountCents: number;
   /** Latest due date seen across all of the deal's schedule entries -- its real maturity date. */
   endDate?: Date;
 }
@@ -78,6 +81,8 @@ function serializeFundedDeal(
     scheduledPaymentsCount: scheduleAgg?.scheduledPaymentsCount,
     postedPaymentsCount: scheduleAgg?.postedPaymentsCount,
     postedAmount: scheduleAgg ? scheduleAgg.postedAmountCents / 100 : undefined,
+    duePaymentsCount: scheduleAgg?.duePaymentsCount,
+    dueAmount: scheduleAgg ? scheduleAgg.dueAmountCents / 100 : undefined,
     scheduleEndDate: toIso(scheduleAgg?.endDate),
     dealType: record.dealType as FundedDeal["dealType"],
     aprPercent: record.aprPercent ?? undefined,
@@ -304,22 +309,36 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
     prisma.leadSheet.findMany({ where: { companyId }, orderBy: { name: "asc" } }),
   ]);
 
-  // One grouped query rolls up the whole company's schedule so the funded board can render real,
-  // cron-posted repayment progress per deal without firing a request per card. Grouping by
-  // (deal, status) lets us separate "how many entries exist" from "how many/how much have posted".
-  const scheduleGroups = fundedDeals.length
-    ? await prisma.paymentScheduleEntry.groupBy({
-        by: ["fundedDealId", "status"],
-        where: { fundedDealId: { in: fundedDeals.map((deal) => deal.id) } },
-        _count: { _all: true },
-        _sum: { postedAmountCents: true, scheduledAmountCents: true },
-        _max: { dueDate: true },
-      })
-    : [];
+  // Two grouped queries roll up the whole company's schedule so the funded board can render
+  // repayment progress per deal without firing a request per card:
+  //  - scheduleGroups (by deal, status): total entries, and how many/how much have actually posted.
+  //  - dueGroups (by deal, entries due on or before now): how many payments the *calendar* says
+  //    should be in by now, regardless of whether the cron has posted them. This is what makes the
+  //    bar reflect elapsed time immediately instead of sitting at 0 until the cron sweeps.
+  const dealIds = fundedDeals.map((deal) => deal.id);
+  const now = new Date();
+  const [scheduleGroups, dueGroups] = fundedDeals.length
+    ? await Promise.all([
+        prisma.paymentScheduleEntry.groupBy({
+          by: ["fundedDealId", "status"],
+          where: { fundedDealId: { in: dealIds } },
+          _count: { _all: true },
+          _sum: { postedAmountCents: true, scheduledAmountCents: true },
+          _max: { dueDate: true },
+        }),
+        prisma.paymentScheduleEntry.groupBy({
+          by: ["fundedDealId"],
+          where: { fundedDealId: { in: dealIds }, dueDate: { lte: now } },
+          _count: { _all: true },
+          _sum: { scheduledAmountCents: true },
+        }),
+      ])
+    : [[], []];
 
   const scheduleByDeal = new Map<string, ScheduleAggregate>();
+  const emptyAgg = (): ScheduleAggregate => ({ scheduledPaymentsCount: 0, postedPaymentsCount: 0, postedAmountCents: 0, duePaymentsCount: 0, dueAmountCents: 0 });
   for (const group of scheduleGroups) {
-    const agg = scheduleByDeal.get(group.fundedDealId) ?? { scheduledPaymentsCount: 0, postedPaymentsCount: 0, postedAmountCents: 0 };
+    const agg = scheduleByDeal.get(group.fundedDealId) ?? emptyAgg();
     agg.scheduledPaymentsCount += group._count._all;
     if (group.status === "posted") {
       agg.postedPaymentsCount += group._count._all;
@@ -330,6 +349,12 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
     if (group._max.dueDate && (!agg.endDate || group._max.dueDate > agg.endDate)) {
       agg.endDate = group._max.dueDate;
     }
+    scheduleByDeal.set(group.fundedDealId, agg);
+  }
+  for (const group of dueGroups) {
+    const agg = scheduleByDeal.get(group.fundedDealId) ?? emptyAgg();
+    agg.duePaymentsCount = group._count._all;
+    agg.dueAmountCents = group._sum.scheduledAmountCents ?? 0;
     scheduleByDeal.set(group.fundedDealId, agg);
   }
 

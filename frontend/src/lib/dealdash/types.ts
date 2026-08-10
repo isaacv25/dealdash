@@ -56,13 +56,23 @@ export interface FundedDeal {
   scheduleCompletedAt?: string;
   /**
    * Live snapshot of the persisted payment schedule, aggregated by the workspace loader so the
-   * funded board can show *actual* repayment progress (driven by cron-posted payments) instead of a
-   * time-based estimate. Undefined when the deal has no generated schedule yet -- progress then
-   * falls back to the elapsed-time estimate. See progressForFundedDeal in calculations.ts.
+   * funded board can show repayment progress against the schedule instead of a loose elapsed-time
+   * estimate. Undefined when the deal has no generated schedule yet -- progress then falls back to
+   * the elapsed-time estimate. See progressForFundedDeal in calculations.ts.
    */
   scheduledPaymentsCount?: number;
   postedPaymentsCount?: number;
   postedAmount?: number;
+  /**
+   * Count / dollar total of schedule entries whose due date is on or before "now" -- i.e. the
+   * payments that *should* have been collected by the calendar, whether or not the cron has actually
+   * posted them yet. This is what drives the progress bar so a deal reflects elapsed time immediately
+   * (e.g. a deal funded three weeks ago on a daily schedule shows ~15 payments in, not 0, even before
+   * the cron catches up). postedPaymentsCount/postedAmount remain the ground-truth "actually banked"
+   * figures and still win when they're ahead (early payoff / EPA).
+   */
+  duePaymentsCount?: number;
+  dueAmount?: number;
   /** Due date of the last persisted schedule entry -- the deal's real maturity date, when a schedule exists. */
   scheduleEndDate?: string;
   dealType: FundedDealType;
