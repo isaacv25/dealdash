@@ -1288,6 +1288,25 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                   onChange={(e) => updateFundedDeal(deal.id, { fundedDate: e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined })}
                 />
               </DealField>
+              {/* First Payment Date: overrides the default "collection starts the day after funding
+                  (a week out for weekly)" anchor for deals a funder actually pulled on a different
+                  date. For weekly deals, setting a date also sets the payment weekday to that date's
+                  day-of-week, so "first pull was Thursday Aug 6" means Thursdays going forward. Use
+                  Recalculate schedule after changing it to rebuild the dates. */}
+              <DealField label="First Payment Date">
+                <input
+                  className="field w-full text-sm"
+                  type="date"
+                  value={toDateInput(deal.firstPaymentDate)}
+                  onChange={(e) => {
+                    const iso = e.target.value ? `${e.target.value}T00:00:00.000Z` : undefined;
+                    updateFundedDeal(deal.id, {
+                      firstPaymentDate: iso,
+                      ...(iso && deal.paymentFrequency === "weekly" ? { paymentWeekday: new Date(iso).getUTCDay() } : {}),
+                    });
+                  }}
+                />
+              </DealField>
               <DealField label="Synd %">
                 <DecimalField
                   value={deal.syndicationPercent * 100}

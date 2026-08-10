@@ -78,12 +78,18 @@ async function buildAndInsertFreshSchedule(tx: Prisma.TransactionClient, dealId:
   const calc = calculateDeal(calcInput);
   if (calc.periods <= 0 || calc.totalPaybackCents <= 0) return [];
 
-  // The default weekday for weekly deals is derived from the funding day so an unspecified weekday
-  // still lands the first payment exactly a week out.
+  // Weekly weekday resolution, in priority order: an explicit firstPaymentDate's weekday (if the
+  // broker set one, that date's day-of-week IS the intended payment day -- e.g. "first pull was
+  // Thursday Aug 6" means Thursdays), then a stored paymentWeekday, then the funding day. Deriving it
+  // from firstPaymentDate guarantees the anchor and the weekly cadence can never disagree (otherwise
+  // datesForWeekly's nextOrSameWeekday could shove the first payment off the very date that was set).
   const fundedOrNow = deal.fundedDate ?? new Date();
   const frequency = deal.paymentFrequency as PaymentFrequency;
   const anchor = firstPaymentAnchor(fundedOrNow, frequency, deal.firstPaymentDate);
-  const weekday = frequency === "weekly" ? (deal.paymentWeekday ?? fundedOrNow.getUTCDay()) : null;
+  const weekday =
+    frequency === "weekly"
+      ? (deal.firstPaymentDate ? deal.firstPaymentDate.getUTCDay() : (deal.paymentWeekday ?? fundedOrNow.getUTCDay()))
+      : null;
 
   const entries = buildSchedule({
     anchorDate: anchor,
