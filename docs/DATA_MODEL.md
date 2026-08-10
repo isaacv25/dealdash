@@ -73,12 +73,14 @@ DealDash is now multi-tenant at the company level.
 - `relatedDealId` (Renewal/Add-on only -- self-relation to the original `FundedDeal`)
 - `psfAmount` (Processing/Service Fee, flat $, every deal type -- see "PSF and Total Payout" below)
 
-The serialized `FundedDeal` the client receives also carries four read-only, loader-computed fields
-that are not stored columns: `scheduledPaymentsCount`, `postedPaymentsCount`, `postedAmount`, and
-`scheduleEndDate`. `loadWorkspace` derives these once per page load by grouping the company's
-`PaymentScheduleEntry` rows (including a `_max(dueDate)` for the maturity date), so the funded board
-can show *actual* cron-posted repayment progress and a real end date per deal without a per-card
-query. They are undefined for deals with no generated schedule.
+The serialized `FundedDeal` the client receives also carries read-only, loader-computed fields that
+are not stored columns: `scheduledPaymentsCount`, `postedPaymentsCount`, `postedAmount`,
+`duePaymentsCount`, `dueAmount`, and `scheduleEndDate`. `loadWorkspace` derives these once per page
+load by grouping the company's `PaymentScheduleEntry` rows (a status grouping for the posted/total
+counts and `_max(dueDate)` maturity date, plus a second grouping over entries with `dueDate <= now`
+for the due-by-calendar counts), so the funded board can show schedule-based repayment progress and a
+real end date per deal without a per-card query. They are undefined for deals with no generated
+schedule.
 
 `expectedEndDateForFundedDeal` (`calculations.ts`) is the display helper for a deal's maturity date:
 it returns `scheduleEndDate` when a schedule exists, and otherwise re-runs the schedule generator's
@@ -228,6 +230,15 @@ always wins over either default:
 - **Weekly**: a full week out -- `fundedDate + 7 days`, then the chosen weekday on or after that.
   Funded Monday with weekday=Monday -> first payment is *next* Monday, exactly 7 days out, never a
   same-week occurrence 1-6 days after funding.
+
+Funders don't always pull on that assumed date, so the funded deal card exposes an editable **First
+Payment Date** field (wired to `firstPaymentDate`). Setting it overrides the anchor above; for a
+weekly deal, the UI also sets `paymentWeekday` to that date's day-of-week, and
+`buildAndInsertFreshSchedule` derives the weekly weekday from `firstPaymentDate` when present -- so
+"the first pull was Thursday Aug 6" anchors payment one to Aug 6 and puts every later payment on a
+Thursday, with no chance of the anchor and the weekly cadence disagreeing. Use **Recalculate
+schedule** after changing it to rebuild the dates (rebuild-from-scratch for a never-started deal,
+honoring the new anchor).
 
 Only the initial schedule uses this anchor; a recast anchors from its effective date instead, since a
 recast is always "from here forward" on an already-running deal.
