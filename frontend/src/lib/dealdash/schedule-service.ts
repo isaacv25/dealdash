@@ -61,56 +61,84 @@ function dealCalculationInput(deal: Pick<DealRow, "fundedAmount" | "factorRate" 
   };
 }
 
+/**
+ * Builds and inserts a schedule for a deal that currently has zero rows, anchored to the deal's real
+ * funded date (a full day after funding, or a full week out for weekly deals -- never the funding day
+ * itself; see firstPaymentAnchor). Caller is responsible for guaranteeing the table is actually empty
+ * for this deal before calling, inside the same transaction.
+ */
+async function buildAndInsertFreshSchedule(tx: Prisma.TransactionClient, dealId: string, context: DealAuditContext) {
+  const deal = await tx.fundedDeal.findUniqueOrThrow({ where: { id: dealId } });
+  const calcInput = dealCalculationInput(deal);
+  const validationErrors = validateDealCalculationInput(calcInput);
+  if (validationErrors.length) {
+    throw new Error(validationErrors.map((e) => e.message).join(" "));
+  }
+
+  const calc = calculateDeal(calcInput);
+  if (calc.periods <= 0 || calc.totalPaybackCents <= 0) return [];
+
+  // The default weekday for weekly deals is derived from the funding day so an unspecified weekday
+  // still lands the first payment exactly a week out.
+  const fundedOrNow = deal.fundedDate ?? new Date();
+  const frequency = deal.paymentFrequency as PaymentFrequency;
+  const anchor = firstPaymentAnchor(fundedOrNow, frequency, deal.firstPaymentDate);
+  const weekday = frequency === "weekly" ? (deal.paymentWeekday ?? fundedOrNow.getUTCDay()) : null;
+
+  const entries = buildSchedule({
+    anchorDate: anchor,
+    frequency: deal.paymentFrequency as PaymentFrequency,
+    weekday,
+    periods: calc.periods,
+    totalCents: calc.totalPaybackCents,
+  });
+
+  await tx.paymentScheduleEntry.createMany({
+    data: entries.map((entry) => ({
+      fundedDealId: dealId,
+      sequence: entry.sequence,
+      dueDate: entry.dueDate,
+      scheduledAmountCents: entry.scheduledAmountCents,
+      status: entry.status,
+    })),
+  });
+
+  if (deal.paymentWeekday === null && weekday !== null) {
+    await tx.fundedDeal.update({ where: { id: dealId }, data: { paymentWeekday: weekday } });
+  }
+
+  await writeAuditEntry(tx, dealId, "schedule-recast", null, { periods: calc.periods, totalPaybackCents: calc.totalPaybackCents }, context);
+  return entries;
+}
+
 /** Builds the very first persisted schedule for a deal. Safe to call only when no entries exist yet. */
 export async function generateInitialSchedule(dealId: string, context: DealAuditContext) {
   return prisma.$transaction(async (tx) => {
-    const deal = await tx.fundedDeal.findUniqueOrThrow({ where: { id: dealId } });
     const existingCount = await tx.paymentScheduleEntry.count({ where: { fundedDealId: dealId } });
     if (existingCount > 0) {
       throw new Error("Schedule already exists for this deal; use recastDealSchedule instead.");
     }
+    return buildAndInsertFreshSchedule(tx, dealId, context);
+  });
+}
 
-    const calcInput = dealCalculationInput(deal);
-    const validationErrors = validateDealCalculationInput(calcInput);
-    if (validationErrors.length) {
-      throw new Error(validationErrors.map((e) => e.message).join(" "));
+/**
+ * Fully rebuilds a deal's schedule from scratch, anchored to its real funded date -- for
+ * "Recalculate schedule" on a deal that has an existing schedule but zero *posted* payments (i.e.
+ * nothing has actually started yet). recastDealSchedule intentionally anchors the rebuilt remainder
+ * to *today*, which is correct for a deal already in progress (you don't want to fabricate payments
+ * that should already have posted), but wrong for a never-started deal: it would silently push the
+ * whole clock out to today instead of back-filling the payments that should already be due. Throws if
+ * any entry is already posted, since that history must go through recastDealSchedule to be preserved.
+ */
+export async function regenerateScheduleFromScratch(dealId: string, context: DealAuditContext) {
+  return prisma.$transaction(async (tx) => {
+    const postedCount = await tx.paymentScheduleEntry.count({ where: { fundedDealId: dealId, status: "posted" } });
+    if (postedCount > 0) {
+      throw new Error("This deal has posted payments; use recastDealSchedule to preserve that history.");
     }
-
-    const calc = calculateDeal(calcInput);
-    if (calc.periods <= 0 || calc.totalPaybackCents <= 0) return [];
-
-    // Collection starts the day after funding (a full week out for weekly deals), never the funding
-    // day itself -- see firstPaymentAnchor. The default weekday for weekly deals is derived from the
-    // funding day so an unspecified weekday still lands the first payment exactly a week out.
-    const fundedOrNow = deal.fundedDate ?? new Date();
-    const frequency = deal.paymentFrequency as PaymentFrequency;
-    const anchor = firstPaymentAnchor(fundedOrNow, frequency, deal.firstPaymentDate);
-    const weekday = frequency === "weekly" ? (deal.paymentWeekday ?? fundedOrNow.getUTCDay()) : null;
-
-    const entries = buildSchedule({
-      anchorDate: anchor,
-      frequency: deal.paymentFrequency as PaymentFrequency,
-      weekday,
-      periods: calc.periods,
-      totalCents: calc.totalPaybackCents,
-    });
-
-    await tx.paymentScheduleEntry.createMany({
-      data: entries.map((entry) => ({
-        fundedDealId: dealId,
-        sequence: entry.sequence,
-        dueDate: entry.dueDate,
-        scheduledAmountCents: entry.scheduledAmountCents,
-        status: entry.status,
-      })),
-    });
-
-    if (deal.paymentWeekday === null && weekday !== null) {
-      await tx.fundedDeal.update({ where: { id: dealId }, data: { paymentWeekday: weekday } });
-    }
-
-    await writeAuditEntry(tx, dealId, "schedule-recast", null, { periods: calc.periods, totalPaybackCents: calc.totalPaybackCents }, context);
-    return entries;
+    await tx.paymentScheduleEntry.deleteMany({ where: { fundedDealId: dealId } });
+    return buildAndInsertFreshSchedule(tx, dealId, context);
   });
 }
 
