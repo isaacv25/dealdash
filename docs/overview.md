@@ -142,6 +142,20 @@ focused on operating reminders.
   does not consult this preference at all (see `docs/DATA_MODEL.md`'s "Hidden financials preference"
   section for why).
 
+## CSV export
+
+- Funded Progress, Pipeline, and Follow-Ups each have an **Export CSV** control (`ExportMenu` in
+  `views.tsx`). It opens a popover with an optional From/To calendar-date range and a live "N of M
+  rows" count; leaving both blank exports the whole dataset. The download filename is stamped with the
+  range and today's date (e.g. `dealdash-pipeline_2026-07-01_to_2026-07-31_2026-08-11.csv`).
+- Each view ranges on its own record date -- Funded on `fundedDate`, Pipeline on `submittedDate`,
+  Follow-Ups on `createdAt` (labeled "Added") -- and exports the full workspace dataset for that view,
+  independent of the on-screen search/stage/tag filters, so an export is always the complete slice for
+  the chosen dates rather than whatever happens to be filtered on screen.
+- The range test and CSV serialization are pure helpers in `lib/dealdash/csv.ts`
+  (`isWithinDateRange`, `serializeCsvRows`), unit-tested in `__tests__/csv.test.ts`; every cell is
+  quoted and embedded quotes doubled, so commas/quotes/newlines inside a value never break the file.
+
 ## Rate Calculator
 
 - Standalone, non-persisted scenario tool at `/rate-calculator`; math lives in
