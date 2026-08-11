@@ -20,10 +20,18 @@ const navItems = [
 
 export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) {
   const pathname = usePathname();
-  const { data, viewer } = useDealdash();
+  const { viewer } = useDealdash();
   const visibleNavItems = viewer.isAdmin
     ? [...navItems, { href: "/admin", label: "Admin", icon: ShieldCheck }]
     : navItems;
+
+  // Identity badge (replaces the old "DB-backed" / "Live workspace" dev tags): initials avatar plus
+  // the signed-in broker's name, company, and role -- something an actual user cares about.
+  const initials =
+    `${viewer.firstName?.[0] ?? ""}${viewer.lastName?.[0] ?? ""}`.toUpperCase() ||
+    viewer.username?.[0]?.toUpperCase() ||
+    "?";
+  const roleLabel = viewer.isAdmin ? "Admin" : "Broker";
 
   return (
     <main className="mx-auto w-full max-w-[1760px] px-3 py-3 sm:px-4 lg:px-5 lg:py-5">
@@ -31,15 +39,25 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
         {/* Mobile: a compact top bar with a horizontally-scrolling nav. Desktop (lg+): the full
             sticky vertical sidebar. */}
         <aside className="glass-card rounded-[1.5rem] p-3 lg:sticky lg:top-5 lg:p-4">
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-[1.2rem] bg-[linear-gradient(135deg,_rgba(21,94,239,0.18),_rgba(13,148,136,0.14))] p-3 lg:mb-6 lg:block lg:p-4">
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-[1.4rem] bg-[linear-gradient(140deg,_rgba(21,94,239,0.16),_rgba(13,148,136,0.12))] p-3 lg:mb-6 lg:block lg:p-4">
             <div className="min-w-0">
-              <div className="pill bg-white/78 text-[var(--accent-strong)]">DealDash</div>
-              <h1 className="mt-3 hidden text-xl font-semibold tracking-tight lg:block">Book of Business Pipeline Dashboard</h1>
-              <p className="mt-1 truncate text-xs leading-5 text-[var(--muted)] lg:mt-2 lg:leading-6">{viewer.companyName} · {viewer.firstName} {viewer.lastName}</p>
+              {/* brand mark: small DealDash monogram + wordmark */}
+              <div className="flex items-center gap-2">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-[0.5rem] bg-[linear-gradient(135deg,var(--accent-strong),var(--accent))] text-[11px] font-bold text-white shadow-sm">DD</span>
+                <span className="text-sm font-semibold tracking-tight text-[var(--accent-strong)]">DealDash</span>
+              </div>
+              <h1 className="mt-3 hidden text-[1.05rem] font-semibold leading-snug tracking-tight lg:block">Book of Business Pipeline Dashboard</h1>
             </div>
-            <div className="hidden flex-wrap gap-2 text-xs lg:mt-4 lg:flex">
-              <span className="pill bg-white text-[var(--foreground)]">DB-backed</span>
-              <span className="pill bg-[var(--accent-soft)] text-[var(--accent-strong)]">{data.sourceMode === "database" ? "Live workspace" : data.sourceMode}</span>
+            {/* Identity badge: avatar initials + name + company·role. Compact next to the brand on
+                mobile; a full-width card under the heading on desktop. */}
+            <div className="flex shrink-0 items-center gap-2.5 lg:mt-4 lg:w-full lg:rounded-[1rem] lg:bg-white/70 lg:p-2.5 lg:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.6)]">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[linear-gradient(135deg,var(--accent-strong),var(--accent))] text-xs font-bold uppercase text-white shadow-sm">
+                {initials}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold leading-tight">{viewer.firstName} {viewer.lastName}</p>
+                <p className="truncate text-xs leading-tight text-[var(--muted)]">{viewer.companyName} · {roleLabel}</p>
+              </div>
             </div>
           </div>
           <nav className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:space-y-1 lg:overflow-visible lg:pb-0">
