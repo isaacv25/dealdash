@@ -19,10 +19,12 @@ import {
   fundedDealIsRenewalCandidate,
   grossPaybackFromDeal,
   HELOC_TERM_YEARS,
+  isWithinDateRange,
   pipelineNeedsNewStatements,
   progressForFundedDeal,
   psfPayout,
   renewalDateForFundedDeal,
+  serializeCsvRows,
   totalPayoutForFundedDeal,
 } from "@/lib/dealdash";
 import type { FollowUpItem, FundedDeal, FundedDealType, FundedTag, PipelineDeal, PipelineStage } from "@/lib/dealdash";
@@ -148,13 +150,7 @@ function todayDateInput() {
 }
 
 function downloadCsv(filename: string, headers: string[], rows: string[][]) {
-  const csv = [
-    headers.join(","),
-    ...rows.map((row) =>
-      row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","),
-    ),
-  ].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob([serializeCsvRows(headers, rows)], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -163,6 +159,93 @@ function downloadCsv(filename: string, headers: string[], rows: string[][]) {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Reusable CSV export control shared by Funded Progress, Pipeline, and Follow-Ups. A button opens a
+ * popover with an optional From/To calendar-date range (filtered on `dateOf`, the record's own date)
+ * and a live count of matching rows; leaving both dates blank exports everything. The filename gets a
+ * date-stamp (and the range, when set) so downloaded files are self-describing and don't overwrite.
+ */
+function ExportMenu<T>({
+  filenameBase,
+  rows,
+  dateOf,
+  dateLabel,
+  headers,
+  toRow,
+}: {
+  filenameBase: string;
+  rows: T[];
+  dateOf: (row: T) => string | undefined;
+  dateLabel: string;
+  headers: string[];
+  toRow: (row: T) => string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  const matching = useMemo(() => rows.filter((row) => isWithinDateRange(dateOf(row), from, to)), [rows, dateOf, from, to]);
+
+  function handleExport() {
+    const stamp = todayDateInput();
+    const rangePart = from || to ? `_${from || "start"}_to_${to || "end"}` : "_all";
+    downloadCsv(`${filenameBase}${rangePart}_${stamp}.csv`, headers, matching.map(toRow));
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative">
+      <button
+        className="ghost-button flex items-center gap-2 text-sm"
+        onClick={() => setOpen((prev) => !prev)}
+        type="button"
+        aria-expanded={open}
+      >
+        <Download className="h-4 w-4" />
+        Export CSV
+      </button>
+      {open && (
+        <>
+          {/* click-away backdrop */}
+          <button type="button" aria-label="Close export menu" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-2 w-[19rem] rounded-[1.1rem] border border-[var(--line)] bg-white p-4 shadow-[0_18px_50px_rgba(21,42,74,0.18)]">
+            <p className="text-sm font-semibold">Export to CSV</p>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">Pick a {dateLabel.toLowerCase()} range, or leave both blank to export everything.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                From
+                <input className="field text-sm font-normal normal-case" type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+              </label>
+              <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                To
+                <input className="field text-sm font-normal normal-case" type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+              </label>
+            </div>
+            {(from || to) && (
+              <button type="button" className="mt-2 text-xs text-[var(--accent-strong)] hover:underline" onClick={() => { setFrom(""); setTo(""); }}>
+                Clear range (export all)
+              </button>
+            )}
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <span className="text-xs text-[var(--muted)]">
+                {matching.length} of {rows.length} {rows.length === 1 ? "row" : "rows"}
+              </span>
+              <button
+                className="primary-button text-sm disabled:opacity-50"
+                onClick={handleExport}
+                disabled={matching.length === 0}
+                type="button"
+              >
+                Download{matching.length ? ` (${matching.length})` : ""}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 // ─── shared UI primitives ─────────────────────────────────────────────────────
@@ -771,38 +854,33 @@ export function FundedProgressView() {
             <Plus className="h-4 w-4" />
             Add Deal
           </button>
-          <button
-            className="ghost-button flex items-center gap-2 text-sm"
-            onClick={() =>
-              downloadCsv(
-                "dealdash-funded-progress.csv",
-                ["Deal Type", "Business", "Contact", "Funder", "Funded", "Rate", "Term", "Freq", "Payment", "House Pts%", "Broker Split%", "Commission$", "PSF$", "Total Payout", "Payback", "Balance", "Status", "Commission Status"],
-                filteredDeals.map((deal) => {
-                  const progress = progressForFundedDeal(deal);
-                  return [
-                    deal.dealType,
-                    deal.businessName, deal.contactName, deal.funder || "",
-                    String(deal.fundedAmount), String(deal.factorRate),
-                    `${deal.termValue} ${deal.termUnit}`, deal.paymentFrequency,
-                    String(deal.paymentAmount),
-                    `${(deal.housePointsPercent * 100).toFixed(1)}%`,
-                    `${(deal.commissionPercent * 100).toFixed(1)}%`,
-                    String(deal.commissionAmount),
-                    String(deal.psfAmount),
-                    String(totalPayoutForFundedDeal(deal)),
-                    String(grossPaybackFromDeal(deal)),
-                    String(progress.balanceRemaining),
-                    deal.statusRaw,
-                    deal.commissionStatus,
-                  ];
-                }),
-              )
-            }
-            type="button"
-          >
-            <Download className="h-4 w-4" />
-            Export
-          </button>
+          <ExportMenu
+            filenameBase="dealdash-funded-progress"
+            rows={data.fundedDeals}
+            dateOf={(deal) => deal.fundedDate}
+            dateLabel="Funded date"
+            headers={["Deal Type", "Business", "Contact", "Phone", "Email", "Funder", "Funded Date", "Funded", "Rate", "Term", "Freq", "Payment", "House Pts%", "Broker Split%", "Commission$", "PSF$", "Total Payout", "Payback", "Balance", "Status", "Commission Status"]}
+            toRow={(deal) => {
+              const progress = progressForFundedDeal(deal);
+              return [
+                deal.dealType,
+                deal.businessName, deal.contactName, deal.phone || "", deal.email || "", deal.funder || "",
+                deal.fundedDate ? deal.fundedDate.slice(0, 10) : "",
+                String(deal.fundedAmount), String(deal.factorRate),
+                `${deal.termValue} ${deal.termUnit}`, deal.paymentFrequency,
+                String(deal.paymentAmount),
+                `${(deal.housePointsPercent * 100).toFixed(1)}%`,
+                `${(deal.commissionPercent * 100).toFixed(1)}%`,
+                String(deal.commissionAmount),
+                String(deal.psfAmount),
+                String(totalPayoutForFundedDeal(deal)),
+                String(grossPaybackFromDeal(deal)),
+                String(progress.balanceRemaining),
+                deal.statusRaw,
+                deal.commissionStatus,
+              ];
+            }}
+          />
         </div>
       }
     >
@@ -1552,6 +1630,20 @@ export function PipelineView() {
             <Plus className="h-4 w-4" />
             Add Lead
           </button>
+          <ExportMenu
+            filenameBase="dealdash-pipeline"
+            rows={data.pipelineDeals}
+            dateOf={(deal) => deal.submittedDate}
+            dateLabel="Lead date"
+            headers={["Business", "Contact", "Phone", "Email", "City", "State", "Request", "Stage", "Lead Sheet", "Notes", "Lead Date"]}
+            toRow={(deal) => [
+              deal.businessName, deal.contactName, deal.phone || "", deal.email || "",
+              deal.city || "", deal.state || "", deal.requestLabel,
+              stageShortLabel[deal.stage] ?? deal.stage,
+              deal.sheetLabel || "", deal.notes,
+              deal.submittedDate ? deal.submittedDate.slice(0, 10) : "",
+            ]}
+          />
         </div>
       }
     >
@@ -1947,6 +2039,19 @@ export function FollowUpsView() {
             <Plus className="h-4 w-4" />
             Add Follow-Up
           </button>
+          <ExportMenu
+            filenameBase="dealdash-follow-ups"
+            rows={data.followUps}
+            dateOf={(item) => item.createdAt}
+            dateLabel="Added date"
+            headers={["Business", "Contact", "Phone", "Email", "Request", "Priority", "App Submitted", "Completed", "Last Contact", "Due Date", "Notes", "Added"]}
+            toRow={(item) => [
+              item.businessName, item.contactName, item.phone || "", item.email || "", item.requestLabel,
+              item.priority, item.appSubmitted ? "Yes" : "No", item.completed ? "Yes" : "No",
+              item.lastContactLabel || "", item.dueDate ? item.dueDate.slice(0, 10) : "",
+              item.notes, item.createdAt ? item.createdAt.slice(0, 10) : "",
+            ]}
+          />
         </div>
       }
     >
