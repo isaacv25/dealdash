@@ -49,8 +49,9 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
               <h1 className="mt-3 hidden text-[1.05rem] font-semibold leading-snug tracking-tight lg:block">Book of Business Pipeline Dashboard</h1>
             </div>
             {/* Identity badge: avatar initials + name + company·role. Compact next to the brand on
-                mobile; a full-width card under the heading on desktop. */}
-            <div className="flex shrink-0 items-center gap-2.5 lg:mt-4 lg:w-full lg:rounded-[1rem] lg:bg-white/70 lg:p-2.5 lg:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.6)]">
+                mobile; a full-width card under the heading on desktop. min-w-0 (not shrink-0) so on a
+                narrow mobile header it shrinks and the name/company truncate rather than overflowing. */}
+            <div className="flex min-w-0 items-center gap-2.5 lg:mt-4 lg:w-full lg:rounded-[1rem] lg:bg-white/70 lg:p-2.5 lg:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.6)]">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[linear-gradient(135deg,var(--accent-strong),var(--accent))] text-xs font-bold uppercase text-white shadow-sm">
                 {initials}
               </span>
