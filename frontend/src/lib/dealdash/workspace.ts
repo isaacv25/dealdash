@@ -4,6 +4,7 @@ import { createBlankFollowUp, createBlankFundedDeal, createBlankPipelineDeal } f
 import { createRealDataset, loadSeedDataset } from "./data";
 import { deriveHelocFields } from "./finance";
 import { backfillMissingSchedules } from "./schedule-service";
+import { easternDateKey } from "./timezone";
 import type { FollowUpItem, FundedDeal, ImportBatch, LeadSheet, PipelineDeal, SeedDataset, TrashRecord, TrashRecordType, ViewerProfile } from "./types";
 
 const TRASH_RETENTION_DAYS = 30;
@@ -312,11 +313,18 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
   // Two grouped queries roll up the whole company's schedule so the funded board can render
   // repayment progress per deal without firing a request per card:
   //  - scheduleGroups (by deal, status): total entries, and how many/how much have actually posted.
-  //  - dueGroups (by deal, entries due on or before now): how many payments the *calendar* says
+  //  - dueGroups (by deal, entries due on or before today): how many payments the *calendar* says
   //    should be in by now, regardless of whether the cron has posted them. This is what makes the
   //    bar reflect elapsed time immediately instead of sitting at 0 until the cron sweeps.
+  //
+  // "Due" is evaluated on the America/New_York calendar date, identically to the cron poster
+  // (isDueInEastern), so the progress bar advances at the SAME Eastern midnight the cron uses to post
+  // -- not ~4 hours early at UTC midnight. dueDates are stored as UTC-midnight of their calendar date,
+  // so the cutoff is UTC-midnight of today's Eastern date: an entry counts when its calendar date is
+  // on or before today in Eastern. Since the route is server-rendered per request, the next page load
+  // after that midnight recomputes with a fresh cutoff and the new payment shows up automatically.
   const dealIds = fundedDeals.map((deal) => deal.id);
-  const now = new Date();
+  const dueCutoff = new Date(`${easternDateKey(new Date())}T00:00:00.000Z`);
   const [scheduleGroups, dueGroups] = fundedDeals.length
     ? await Promise.all([
         prisma.paymentScheduleEntry.groupBy({
@@ -328,7 +336,7 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
         }),
         prisma.paymentScheduleEntry.groupBy({
           by: ["fundedDealId"],
-          where: { fundedDealId: { in: dealIds }, dueDate: { lte: now } },
+          where: { fundedDealId: { in: dealIds }, dueDate: { lte: dueCutoff } },
           _count: { _all: true },
           _sum: { scheduledAmountCents: true },
         }),
