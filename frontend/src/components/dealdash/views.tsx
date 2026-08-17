@@ -351,29 +351,58 @@ function CommissionBadge({ status }: { status: FundedDeal["commissionStatus"] })
   return <span className={`pill ${config.tone}`}>{config.label}</span>;
 }
 
+/**
+ * Deterministic funded-deal tags. Rules (in strict priority order):
+ *   1. Clawback -- exclusive: shows ONLY "Clawback", card is RED.
+ *   2. Paid + EPA -- exclusive: shows ONLY "Paid + EPA", card is GREEN.
+ *   3. Paid in full (schedule ran out) -- "Paid in full" replaces "Active", card is GREEN. Commission
+ *      tag can still show alongside if commission is paid out.
+ *   4. Otherwise the deal is Active. "Active" tag is always on. If the renewal date has arrived,
+ *      "Potential renewal" also on and the card turns YELLOW (else BLUE). Commission tag can show.
+ *
+ * The "Commission" tag is orthogonal to card color -- it shows whenever commission is paid out
+ * (either via the CommissionStatus dropdown or by manually toggling the Commission tag), unless
+ * one of the exclusive states above is active.
+ *
+ * Manual `fundedTags` (from the tag toggles at the bottom of the card) let a broker force any state,
+ * so the derived rules and the manual overrides intentionally use OR everywhere.
+ */
 function tagsForFundedDeal(deal: FundedDeal): FundedTag[] {
-  const tags = new Set<FundedTag>(deal.fundedTags || []);
-  const progress = progressForFundedDeal(deal);
+  const manual = new Set<FundedTag>(deal.fundedTags || []);
   const raw = `${deal.statusRaw} ${deal.notes}`.toLowerCase();
-  const renewalDate = renewalDateForFundedDeal(deal);
 
-  if (deal.statusStage === "clawback" || deal.commissionStatus === "clawback" || raw.includes("clawback")) tags.add("clawback");
-  if (raw.includes("epa")) tags.add("paid-epa");
-  if (progress.totalPeriods > 0 && progress.paymentsRemaining === 0) tags.add("paid-in-full");
-  if (deal.statusStage === "active" && progress.paymentsRemaining > 0) tags.add("active");
-  if (deal.commissionStatus === "paid-out" || deal.commissionAmount > 0) tags.add("commission");
-  if (renewalDate) {
-    const diff = new Date(renewalDate).getTime() - Date.now();
-    if (diff >= 0 && diff <= 1000 * 60 * 60 * 24 * 60) tags.add("potential-renewal");
+  // Exclusive states, in priority order -- return early, tag list is JUST this one tag.
+  if (deal.statusStage === "clawback" || deal.commissionStatus === "clawback" || manual.has("clawback") || raw.includes("clawback")) {
+    return ["clawback"];
+  }
+  if (manual.has("paid-epa") || raw.includes("epa")) {
+    return ["paid-epa"];
   }
 
-  return Array.from(tags);
+  const progress = progressForFundedDeal(deal);
+  const commissionPaid = deal.commissionStatus === "paid-out" || manual.has("commission");
+  const paidInFull = manual.has("paid-in-full") || (progress.totalPeriods > 0 && progress.paymentsRemaining === 0);
+
+  if (paidInFull) {
+    return commissionPaid ? ["paid-in-full", "commission"] : ["paid-in-full"];
+  }
+
+  // Active state. Potential renewal switches on the moment the renewal date has arrived, not 60 days
+  // out -- brokers pitch the renewal at that midpoint, so that's when the card should turn yellow.
+  const renewalDate = renewalDateForFundedDeal(deal);
+  const pastRenewal = manual.has("potential-renewal") || (renewalDate ? Date.now() >= new Date(renewalDate).getTime() : false);
+  const result: FundedTag[] = ["active"];
+  if (pastRenewal) result.push("potential-renewal");
+  if (commissionPaid) result.push("commission");
+  return result;
 }
 
 function fundedTintClass(tags: FundedTag[]) {
-  // Tint priority intentionally mirrors business urgency: clawback > paid in full > active.
+  // Card color follows the same exclusive-then-priority order as tagsForFundedDeal itself.
   if (tags.includes("clawback")) return "border-red-200 bg-red-50/88";
+  if (tags.includes("paid-epa")) return "border-emerald-200 bg-emerald-50/88";
   if (tags.includes("paid-in-full")) return "border-emerald-200 bg-emerald-50/88";
+  if (tags.includes("potential-renewal")) return "border-amber-200 bg-amber-50/88";
   if (tags.includes("active")) return "border-blue-200 bg-blue-50/88";
   return "border-white/80 bg-white/80";
 }
@@ -381,10 +410,10 @@ function fundedTintClass(tags: FundedTag[]) {
 function tagBadgeClass(tag: FundedTag) {
   if (tag === "clawback") return "bg-red-100 text-red-700";
   if (tag === "paid-in-full") return "bg-emerald-100 text-emerald-700";
+  if (tag === "paid-epa") return "bg-emerald-100 text-emerald-700";
   if (tag === "active") return "bg-blue-100 text-blue-700";
-  if (tag === "commission") return "bg-teal-100 text-teal-700";
-  if (tag === "paid-epa") return "bg-lime-100 text-lime-700";
-  return "bg-amber-100 text-amber-700";
+  if (tag === "commission") return "bg-emerald-100 text-emerald-700";
+  return "bg-amber-100 text-amber-700"; // potential-renewal
 }
 
 function toggleFundedTag(tags: FundedTag[], tag: FundedTag) {
@@ -1151,7 +1180,19 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                     value={deal.relatedDealId || ""}
                     onChange={(e) => {
                       const relatedDealId = e.target.value || undefined;
-                      updateFundedDeal(deal.id, { relatedDealId });
+                      // Auto-fill business/contact/phone/email from the linked original -- a renewal or
+                      // add-on is by definition the *same client*, so re-typing that info is busywork.
+                      // Only fills *empty* fields so existing edits are never clobbered; each field
+                      // stays editable, so the broker can still adjust anything after the auto-fill.
+                      const linked = relatedDealId ? allDeals.find((d) => d.id === relatedDealId) : null;
+                      const autofill: Partial<FundedDeal> = {};
+                      if (linked) {
+                        if (!deal.businessName && linked.businessName) autofill.businessName = linked.businessName;
+                        if (!deal.contactName && linked.contactName) autofill.contactName = linked.contactName;
+                        if (!deal.phone && linked.phone) autofill.phone = linked.phone;
+                        if (!deal.email && linked.email) autofill.email = linked.email;
+                      }
+                      updateFundedDeal(deal.id, { relatedDealId, ...autofill });
                       // A renewal pays off the original deal's balance, so linking one marks that
                       // original deal fully repaid -- the same scheduleCompletedAt/statusStage the
                       // cron poster sets when a normal schedule finishes naturally (schedule-service.ts).
