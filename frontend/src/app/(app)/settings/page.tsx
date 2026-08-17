@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/lib/auth";
 import { updatePasswordAction, updateProfileAction } from "./actions";
+import { SystemSettingsSection } from "./system-settings";
 
 const messages: Record<string, string> = {
   saved: "Settings saved.",
@@ -47,6 +48,7 @@ export default async function SettingsPage({
       )}
 
       <div className="grid gap-4 xl:grid-cols-2">
+        <SystemSettingsSection initialRenewalPercent={Math.round(user.renewalTermFraction * 100)} />
         <form action={updateProfileAction} className="rounded-[1.2rem] border border-[var(--line)] bg-white/78 p-4">
           <h3 className="text-base font-semibold">Profile</h3>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
