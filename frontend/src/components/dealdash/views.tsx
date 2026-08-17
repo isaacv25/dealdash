@@ -96,13 +96,15 @@ const pipelineStageColor: Record<PipelineStage, string> = {
   renewal: "var(--accent)",
 };
 
+// "potential-renewal" is deliberately NOT a manually-togglable tag -- it's purely derived from the
+// renewal date. Ethan wants it to appear only when the deal actually crosses that threshold, not
+// something a broker can force on/off from the card.
 const fundedTagOptions: Array<{ key: FundedTag; label: string }> = [
   { key: "clawback", label: "Clawback" },
   { key: "paid-epa", label: "Paid + EPA" },
   { key: "paid-in-full", label: "Paid in full" },
   { key: "active", label: "Active" },
   { key: "commission", label: "Commission" },
-  { key: "potential-renewal", label: "Potential renewal" },
 ];
 
 const dealTypeOptions: Array<{ key: FundedDealType; label: string }> = [
@@ -367,7 +369,7 @@ function CommissionBadge({ status }: { status: FundedDeal["commissionStatus"] })
  * Manual `fundedTags` (from the tag toggles at the bottom of the card) let a broker force any state,
  * so the derived rules and the manual overrides intentionally use OR everywhere.
  */
-function tagsForFundedDeal(deal: FundedDeal): FundedTag[] {
+function tagsForFundedDeal(deal: FundedDeal, renewalFraction?: number): FundedTag[] {
   const manual = new Set<FundedTag>(deal.fundedTags || []);
   const raw = `${deal.statusRaw} ${deal.notes}`.toLowerCase();
 
@@ -387,10 +389,11 @@ function tagsForFundedDeal(deal: FundedDeal): FundedTag[] {
     return commissionPaid ? ["paid-in-full", "commission"] : ["paid-in-full"];
   }
 
-  // Active state. Potential renewal switches on the moment the renewal date has arrived, not 60 days
-  // out -- brokers pitch the renewal at that midpoint, so that's when the card should turn yellow.
-  const renewalDate = renewalDateForFundedDeal(deal);
-  const pastRenewal = manual.has("potential-renewal") || (renewalDate ? Date.now() >= new Date(renewalDate).getTime() : false);
+  // Active state. Potential renewal is purely derived (no manual override) -- it switches on the
+  // moment the renewal date arrives, using the viewer's configured renewalTermFraction from Settings
+  // > System. Brokers pitch renewals at that midpoint, so that's when the card turns yellow.
+  const renewalDate = renewalDateForFundedDeal(deal, renewalFraction);
+  const pastRenewal = renewalDate ? Date.now() >= new Date(renewalDate).getTime() : false;
   const result: FundedTag[] = ["active"];
   if (pastRenewal) result.push("potential-renewal");
   if (commissionPaid) result.push("commission");
@@ -423,7 +426,8 @@ function toggleFundedTag(tags: FundedTag[], tag: FundedTag) {
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export function DashboardView() {
-  const { data, showFinancials, updateFollowUp, updateFundedDeal, updatePipelineDeal } = useDealdash();
+  const { data, viewer, showFinancials, updateFollowUp, updateFundedDeal, updatePipelineDeal } = useDealdash();
+  const renewalFraction = viewer.renewalTermFraction;
   const [today] = useState(() => Date.now());
   const [hiddenMetrics, setHiddenMetrics] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") {
@@ -452,6 +456,13 @@ export function DashboardView() {
   const metrics = useMemo(() => {
     const fundedVolume = data.fundedDeals.reduce((sum, deal) => sum + deal.fundedAmount, 0);
     const commission = data.fundedDeals.reduce((sum, deal) => sum + deal.commissionAmount, 0);
+    // Sum of commission dollars where commissionStatus has flipped to "paid-out" -- the
+    // "money actually collected" KPI, so clicking a deal's Commission tag (which also flips its
+    // status) is visibly reflected on the dashboard the very next render.
+    const commissionPaidOut = data.fundedDeals.reduce(
+      (sum, deal) => (deal.commissionStatus === "paid-out" ? sum + deal.commissionAmount : sum),
+      0,
+    );
     const grossPayback = data.fundedDeals.reduce(
       (sum, deal) => sum + grossPaybackFromDeal(deal),
       0,
@@ -463,6 +474,7 @@ export function DashboardView() {
     return {
       fundedVolume,
       commission,
+      commissionPaidOut,
       grossPayback,
       remaining,
       fundedCount: data.fundedDeals.length,
@@ -548,7 +560,11 @@ export function DashboardView() {
         <MetricCard
           label="Commission Book"
           value={hiddenCurrency(!hiddenMetrics.commission, metrics.commission)}
-          detail={`${upcomingRenewals.length} renewals ready`}
+          detail={
+            hiddenMetrics.commission
+              ? `${upcomingRenewals.length} renewals ready`
+              : `${formatCurrency(metrics.commissionPaidOut)} paid out · ${upcomingRenewals.length} renewals ready`
+          }
           hidden={Boolean(hiddenMetrics.commission)}
           onToggleVisibility={() => toggleMetricVisibility("commission")}
         />
@@ -655,7 +671,7 @@ export function DashboardView() {
                 subtitle={[deal.contactName, deal.funder].filter(Boolean).join(" · ") || undefined}
                 badge={`${pct}% paid`}
                 badgeClass="bg-[var(--success)]/12 text-[var(--success)]"
-                detail={renewalDateForFundedDeal(deal) ? `Renewal target ${formatDate(renewalDateForFundedDeal(deal))}` : undefined}
+                detail={renewalDateForFundedDeal(deal, renewalFraction) ? `Renewal target ${formatDate(renewalDateForFundedDeal(deal, renewalFraction))}` : undefined}
                 actionLabel="Dismiss"
                 actionIcon={<X className="h-3.5 w-3.5" />}
                 onAction={() => updateFundedDeal(deal.id, { renewalAckAt: new Date().toISOString() })}
@@ -789,7 +805,8 @@ function DealField({
 
 export function FundedProgressView() {
   // update/delete now live inside FundedDealCard; this view only adds deals and reads the list.
-  const { data, addFundedDeal } = useDealdash();
+  const { data, viewer, addFundedDeal } = useDealdash();
+  const renewalFraction = viewer.renewalTermFraction;
   const [query, setQuery] = useState("");
   const [activeMonth, setActiveMonth] = useState("all");
   const [newFundedDate, setNewFundedDate] = useState(todayDateInput());
@@ -816,20 +833,20 @@ export function FundedProgressView() {
   const tagCounts = useMemo(() => {
     const counts = new Map<FundedTag, number>();
     for (const deal of monthAndQueryFilteredDeals) {
-      for (const tag of tagsForFundedDeal(deal)) {
+      for (const tag of tagsForFundedDeal(deal, renewalFraction)) {
         counts.set(tag, (counts.get(tag) ?? 0) + 1);
       }
     }
     return counts;
-  }, [monthAndQueryFilteredDeals]);
+  }, [monthAndQueryFilteredDeals, renewalFraction]);
 
   const filteredDeals = useMemo(
     () =>
       monthAndQueryFilteredDeals.filter((deal) => {
-        const dealTags = tagsForFundedDeal(deal);
+        const dealTags = tagsForFundedDeal(deal, renewalFraction);
         return activeTags.size === 0 || Array.from(activeTags).every((tag) => dealTags.includes(tag));
       }),
-    [monthAndQueryFilteredDeals, activeTags],
+    [monthAndQueryFilteredDeals, activeTags, renewalFraction],
   );
 
   function toggleActiveTag(tag: FundedTag) {
@@ -973,16 +990,16 @@ export function FundedProgressView() {
  * reformatting mid-keystroke.
  */
 function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: number; allDeals: FundedDeal[] }) {
-  const { updateFundedDeal, deleteFundedDeal } = useDealdash();
+  const { viewer, updateFundedDeal, deleteFundedDeal } = useDealdash();
   const [open, setOpen] = useState(false);
   // Detail (inputs + advanced servicing panel) stays unmounted until first expanded so a board of
   // many deals doesn't mount every editor and schedule panel up front, and collapsed cards don't
   // leave hidden-but-tabbable form controls in the tab order.
   const [everOpened, setEverOpened] = useState(false);
 
-  const tags = tagsForFundedDeal(deal);
+  const tags = tagsForFundedDeal(deal, viewer.renewalTermFraction);
   const progress = progressForFundedDeal(deal);
-  const renewalDate = renewalDateForFundedDeal(deal);
+  const renewalDate = renewalDateForFundedDeal(deal, viewer.renewalTermFraction);
   const endDate = expectedEndDateForFundedDeal(deal);
   const houseAmt = deal.fundedAmount * deal.housePointsPercent;
   const payback = grossPaybackFromDeal(deal);
@@ -1474,12 +1491,29 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                 <div className="flex flex-wrap gap-2">
                   {fundedTagOptions.map((tag) => {
                     const persistedTags = deal.fundedTags || [];
-                    const selected = persistedTags.includes(tag.key);
+                    // "selected" mirrors whatever the card is actually showing (from the derived
+                    // `tags` above), not just what's been manually toggled -- so an auto-derived Active
+                    // shows highlighted here too, no more confusion between "tag showing" and "toggle
+                    // lit up".
+                    const selected = tags.includes(tag.key);
                     return (
                       <button
                         key={tag.key}
                         className={`pill transition ${selected ? tagBadgeClass(tag.key) : "bg-white/72 text-[var(--muted)] hover:bg-white"}`}
-                        onClick={() => updateFundedDeal(deal.id, { fundedTags: toggleFundedTag(persistedTags, tag.key) })}
+                        onClick={() => {
+                          if (tag.key === "commission") {
+                            // Commission tag click IS the "commission paid out" action, not just a
+                            // decorative tag toggle. Flipping commissionStatus makes it show up in
+                            // the dashboard's Paid Out KPI + the top-of-card "Commission Paid Out"
+                            // badge, so the same click has one consistent effect across the app.
+                            updateFundedDeal(deal.id, {
+                              commissionStatus: deal.commissionStatus === "paid-out" ? "pending" : "paid-out",
+                            });
+                            return;
+                          }
+                          // Everything else stays a plain manual override on fundedTags.
+                          updateFundedDeal(deal.id, { fundedTags: toggleFundedTag(persistedTags, tag.key) });
+                        }}
                         type="button"
                       >
                         {tag.label}

@@ -186,4 +186,7 @@ export interface ViewerProfile {
   lastName: string;
   companyName: string;
   hideFinancialsByDefault: boolean;
+  /** Fraction of term (0..1) after which a funded deal's Renewal Date is targeted -- broker-tunable
+   *  via Settings > System. 0.5 default = halfway through the term. */
+  renewalTermFraction: number;
 }

@@ -15,6 +15,7 @@ import {
   updateFollowUpAction,
   updateFundedDealAction,
   updatePipelineDealAction,
+  updateRenewalTermFractionAction,
 } from "@/app/(app)/actions";
 import type { FollowUpItem, FundedDeal, ImportBatch, PipelineDeal, SeedDataset, ViewerProfile } from "@/lib/dealdash";
 
@@ -30,6 +31,7 @@ interface DealdashContextValue {
   updatePipelineDeal: (id: string, patch: Partial<PipelineDeal>) => void;
   deletePipelineDeal: (id: string) => void;
   addLeadSheet: (name: string) => void;
+  updateRenewalTermFraction: (fraction: number) => void;
   addFollowUp: () => void;
   updateFollowUp: (id: string, patch: Partial<FollowUpItem>) => void;
   deleteFollowUp: (id: string) => void;
@@ -132,6 +134,17 @@ export function DealdashProvider({ initialData, viewer, children }: Readonly<{ i
       setData((current) => ({ ...current, pipelineDeals: current.pipelineDeals.filter((deal) => deal.id !== id) }));
       startTransition(() => {
         void deletePipelineDealAction(id).catch((error) => logPersistFailure("pipeline deal delete", error));
+      });
+    },
+    updateRenewalTermFraction(fraction) {
+      // Optimistic viewer update so every deal card's renewal date + potential-renewal tag
+      // recomputes immediately from the new sensitivity; server round-trip only writes it back.
+      const clamped = Math.min(1, Math.max(0.05, fraction));
+      setViewerState((current) => ({ ...current, renewalTermFraction: clamped }));
+      startTransition(() => {
+        void updateRenewalTermFractionAction(clamped)
+          .then((updatedViewer) => setViewerState(updatedViewer))
+          .catch((error) => logPersistFailure("renewal term fraction", error));
       });
     },
     addLeadSheet(name) {

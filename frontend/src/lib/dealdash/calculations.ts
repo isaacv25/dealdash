@@ -218,22 +218,34 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
   };
 }
 
-// Renewal is marketed once a deal is roughly half paid down, not near the end of term.
-const RENEWAL_TERM_FRACTION = 0.5;
+// Default renewal fraction if the caller doesn't supply one. This is the fallback for callers that
+// don't have access to the viewer's preference (tests, cron jobs, server actions running under the
+// service context). All UI call sites should pass the viewer's ViewerProfile.renewalTermFraction.
+export const DEFAULT_RENEWAL_TERM_FRACTION = 0.5;
 
-export function renewalDateForFundedDeal(deal: FundedDeal) {
+/**
+ * Renewal target date for a funded deal. The fraction argument (viewer-configurable via
+ * Settings > System, per-broker in the User row) controls how aggressively to market a renewal:
+ * 0.5 = halfway through the term (default), 0.3 = fire earlier, etc. A manualRenewalDate always
+ * wins over the computed date so a broker can override any specific deal.
+ */
+export function renewalDateForFundedDeal(deal: FundedDeal, fraction: number = DEFAULT_RENEWAL_TERM_FRACTION) {
   if (deal.manualRenewalDate) return deal.manualRenewalDate;
   if (!deal.fundedDate) return undefined;
   const fundedDate = new Date(deal.fundedDate);
   if (Number.isNaN(fundedDate.getTime())) return undefined;
 
+  // Belt-and-braces: workspace.ts's updater already clamps this, but any stray zero here would still
+  // produce a renewal on the funding day. Snap to a sane floor rather than crashing math downstream.
+  const safeFraction = Number.isFinite(fraction) && fraction > 0 ? Math.min(1, fraction) : DEFAULT_RENEWAL_TERM_FRACTION;
+
   const renewal = new Date(fundedDate);
   if (deal.termUnit === "days") {
-    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * RENEWAL_TERM_FRACTION));
+    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * safeFraction));
   } else if (deal.termUnit === "weeks") {
-    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * 7 * RENEWAL_TERM_FRACTION));
+    renewal.setDate(renewal.getDate() + Math.round(deal.termValue * 7 * safeFraction));
   } else {
-    renewal.setMonth(renewal.getMonth() + Math.max(1, Math.round(deal.termValue * RENEWAL_TERM_FRACTION)));
+    renewal.setMonth(renewal.getMonth() + Math.max(1, Math.round(deal.termValue * safeFraction)));
   }
   return renewal.toISOString();
 }

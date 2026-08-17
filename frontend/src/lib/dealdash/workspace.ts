@@ -23,6 +23,7 @@ function viewerFromUser(user: User & { company: { name: string } }): ViewerProfi
     lastName: user.lastName,
     companyName: user.company.name,
     hideFinancialsByDefault: user.hideFinancialsByDefault,
+    renewalTermFraction: user.renewalTermFraction,
   };
 }
 
@@ -870,11 +871,19 @@ export async function importWorkspaceData(
   return loadWorkspace(companyId);
 }
 
-export async function updateViewerPreferences(userId: string, patch: { hideFinancialsByDefault?: boolean }) {
+export async function updateViewerPreferences(
+  userId: string,
+  patch: { hideFinancialsByDefault?: boolean; renewalTermFraction?: number },
+) {
   const updated = await prisma.user.update({
     where: { id: userId },
     data: {
       ...(patch.hideFinancialsByDefault !== undefined ? { hideFinancialsByDefault: patch.hideFinancialsByDefault } : {}),
+      // Clamp to a sensible (0.05, 1) window so an off-by-one input can't zero-out the renewal date
+      // math or push renewals well beyond term-end. UI already gates but persisted values do too.
+      ...(patch.renewalTermFraction !== undefined
+        ? { renewalTermFraction: Math.min(1, Math.max(0.05, patch.renewalTermFraction)) }
+        : {}),
     },
     include: { company: true },
   });

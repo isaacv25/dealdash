@@ -16,6 +16,26 @@
   --shadow: 0 24px 64px rgba(21, 42, 74, 0.14);
 }
 
+/* Dark theme: opt-in via [data-theme="dark"] on <html> (set by the ThemeProvider client
+   component from the user's Settings > System preference). Only tokens change here -- every
+   component reads via var(--foo), so no per-component dark styles are needed. Tuned to sit
+   comfortably against the dark html background below rather than being pure black. */
+:root[data-theme="dark"] {
+  --background: #0b1220;
+  --foreground: #e6ecf5;
+  --muted: #93a3bd;
+  --card: rgba(24, 34, 54, 0.86);
+  --card-strong: rgba(28, 40, 62, 0.96);
+  --line: rgba(230, 236, 245, 0.14);
+  --accent: #34d1c1;
+  --accent-strong: #6b8bff;
+  --accent-soft: rgba(107, 139, 255, 0.16);
+  --success: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -33,6 +53,13 @@ html {
     radial-gradient(circle at top left, rgba(13, 148, 136, 0.18), transparent 34%),
     radial-gradient(circle at top right, rgba(21, 94, 239, 0.18), transparent 40%),
     linear-gradient(180deg, #f7fbff 0%, #eef4ff 55%, #f4f8ff 100%);
+}
+
+html[data-theme="dark"] {
+  background:
+    radial-gradient(circle at top left, rgba(52, 209, 193, 0.18), transparent 34%),
+    radial-gradient(circle at top right, rgba(107, 139, 255, 0.20), transparent 40%),
+    linear-gradient(180deg, #0a1020 0%, #0e1830 55%, #0b1220 100%);
 }
 
 body {

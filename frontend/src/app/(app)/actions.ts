@@ -124,6 +124,11 @@ export async function updateFinancialVisibilityAction(hideFinancialsByDefault: b
   return updateViewerPreferences(user.id, { hideFinancialsByDefault });
 }
 
+export async function updateRenewalTermFractionAction(renewalTermFraction: number) {
+  const user = await getScopedUser();
+  return updateViewerPreferences(user.id, { renewalTermFraction });
+}
+
 export async function restoreTrashRecordAction(type: TrashRecordType, id: string) {
   const user = await getScopedUser();
   await restoreTrashRecord(user.companyId, type, id);

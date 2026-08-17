@@ -31,6 +31,10 @@ model User {
   passwordHash            String
   role                    String          @default("user")
   hideFinancialsByDefault Boolean         @default(true)
+  // Fraction of a funded deal's term at which the "Renewal Date" is set (see
+  // renewalDateForFundedDeal). Default 0.5 = renewal marketed at the halfway point; brokers can
+  // dial it down (0.3 for aggressive pitching, etc.) or up from the Settings > System panel.
+  renewalTermFraction     Float           @default(0.5)
   sessions                Session[]
   createdFundedDeals      FundedDeal[]    @relation("FundedDealCreatedBy")
   updatedFundedDeals      FundedDeal[]    @relation("FundedDealUpdatedBy")
