@@ -327,15 +327,24 @@ function ScheduleTimeline({ dealId, rows, onLoad }: { dealId: string; rows: Sche
 }
 
 function AdjustmentsForm({ deal, onApplied }: { deal: FundedDeal; onApplied: () => void }) {
+  const { updateFundedDeal } = useDealdash();
   const [mode, setMode] = useState<"lowered" | "pause">("lowered");
   const [newAmount, setNewAmount] = useState(0);
   const [effectiveDate, setEffectiveDate] = useState(toDateInput(new Date().toISOString()));
   const [endDate, setEndDate] = useState("");
   const [resumeDate, setResumeDate] = useState("");
   const [reason, setReason] = useState("");
+  const [retroactive, setRetroactive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Captured once at mount (not read during render) so the backdated hint stays a pure computation.
+  const [mountedAt] = useState(() => Date.now());
+
+  // The start date is in the past -> the adjustment reaches back over payments the cron already
+  // posted, so the retroactive toggle becomes relevant. (It's harmless when off; this just surfaces it.)
+  const startIso = dateInputToIso(effectiveDate);
+  const isBackdated = startIso ? new Date(startIso).getTime() < mountedAt : false;
 
   async function submit() {
     setError(null);
@@ -346,22 +355,44 @@ function AdjustmentsForm({ deal, onApplied }: { deal: FundedDeal; onApplied: () 
     }
     setBusy(true);
     try {
+      // Both adjustment actions return the deal's recomputed schedule snapshot so we can patch the
+      // card in place -- balance, progress bar, and maturity date all move immediately without a reload.
+      let snapshot;
       if (mode === "lowered") {
-        await applyLoweredPaymentAction(deal.id, {
+        snapshot = await applyLoweredPaymentAction(deal.id, {
           newAmount,
-          effectiveDateIso: dateInputToIso(effectiveDate) ?? new Date().toISOString(),
+          effectiveDateIso: startIso ?? new Date().toISOString(),
           endDateIso: endDate ? (dateInputToIso(endDate) ?? null) : null,
           reason,
+          retroactive,
         });
-        setSuccess("Lowered payment applied to future scheduled payments.");
+        setSuccess(
+          retroactive
+            ? "Lowered payment applied, including the already-posted payments in the window. Balance updated."
+            : "Lowered payment applied to the scheduled payments in the window.",
+        );
       } else {
-        await applyPaymentPauseAction(deal.id, {
-          pauseStartIso: dateInputToIso(effectiveDate) ?? new Date().toISOString(),
+        snapshot = await applyPaymentPauseAction(deal.id, {
+          pauseStartIso: startIso ?? new Date().toISOString(),
           resumeDateIso: resumeDate ? (dateInputToIso(resumeDate) ?? null) : null,
           reason,
+          retroactive,
         });
-        setSuccess("Payments paused; the deal's maturity has been extended to make up the paused periods.");
+        setSuccess(
+          retroactive
+            ? "Payments paused, including the already-posted payments in the window; balance and maturity updated."
+            : "Payments paused; the deal's maturity has been extended to make up the paused periods.",
+        );
       }
+      // Patch the local deal from the authoritative server snapshot (dollars / ISO already).
+      updateFundedDeal(deal.id, {
+        scheduledPaymentsCount: snapshot.scheduledPaymentsCount,
+        postedPaymentsCount: snapshot.postedPaymentsCount,
+        postedAmount: snapshot.postedAmount,
+        duePaymentsCount: snapshot.duePaymentsCount,
+        dueAmount: snapshot.dueAmount,
+        scheduleEndDate: snapshot.scheduleEndDate ?? undefined,
+      });
       setReason("");
       onApplied();
     } catch (e) {
@@ -417,6 +448,23 @@ function AdjustmentsForm({ deal, onApplied }: { deal: FundedDeal; onApplied: () 
           <input className="field text-sm" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Required" />
         </label>
       </div>
+
+      <label className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${retroactive ? "border-[var(--warn)]/50 bg-[var(--warn)]/8" : "surface-line bg-white/60"}`}>
+        <input type="checkbox" className="mt-0.5" checked={retroactive} onChange={(e) => setRetroactive(e.target.checked)} />
+        <span>
+          <span className="font-semibold text-[var(--foreground)]">Apply to past payments too</span>
+          <span className="block text-[var(--muted)]">
+            {mode === "lowered"
+              ? "Also correct payments already posted in this window down to the new amount — the shortfall is added back to the outstanding balance."
+              : "Also reverse payments already posted in this window — they stop counting as paid, the balance rises, and maturity extends to make them up."}
+            {isBackdated && !retroactive && (
+              <span className="mt-1 block font-semibold text-[var(--warn)]">
+                Your start date is in the past. Leave this off and only still-upcoming payments change.
+              </span>
+            )}
+          </span>
+        </span>
+      </label>
 
       {error && <p className="text-xs font-semibold text-[var(--danger)]">{error}</p>}
       {success && <p className="text-xs font-semibold text-[var(--success)]">{success}</p>}

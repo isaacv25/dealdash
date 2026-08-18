@@ -186,7 +186,7 @@ export async function regenerateDealScheduleFromScratchAction(dealId: string, re
 
 export async function applyLoweredPaymentAction(
   dealId: string,
-  input: { newAmount: number; effectiveDateIso: string; endDateIso: string | null; reason: string },
+  input: { newAmount: number; effectiveDateIso: string; endDateIso: string | null; reason: string; retroactive?: boolean },
 ) {
   const user = await getScopedUser();
   await requireOwnedFundedDeal(user.companyId, dealId);
@@ -195,13 +195,14 @@ export async function applyLoweredPaymentAction(
     effectiveDate: new Date(input.effectiveDateIso),
     endDate: input.endDateIso ? new Date(input.endDateIso) : null,
     reason: input.reason,
+    retroactive: input.retroactive ?? false,
     userId: user.id,
   });
 }
 
 export async function applyPaymentPauseAction(
   dealId: string,
-  input: { pauseStartIso: string; resumeDateIso: string | null; reason: string },
+  input: { pauseStartIso: string; resumeDateIso: string | null; reason: string; retroactive?: boolean },
 ) {
   const user = await getScopedUser();
   await requireOwnedFundedDeal(user.companyId, dealId);
@@ -209,6 +210,7 @@ export async function applyPaymentPauseAction(
     pauseStart: new Date(input.pauseStartIso),
     resumeDate: input.resumeDateIso ? new Date(input.resumeDateIso) : null,
     reason: input.reason,
+    retroactive: input.retroactive ?? false,
     userId: user.id,
   });
 }

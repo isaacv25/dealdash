@@ -263,26 +263,38 @@ export interface PauseParams {
   resumeDate: Date | null;
   frequency: PaymentFrequency;
   weekday: number | null;
+  /**
+   * When true, already-*posted* payments inside the window are reversed to "paused" too, not just
+   * still-pending ones. This is the "retroactive correction" path: the broker is recording that
+   * payments the cron optimistically posted in past weeks were in fact on hold and never collected,
+   * so they stop counting toward paid (raising the balance) and are made up at the tail like any
+   * other pause. Their collected amount is cleared here; the service layer clears the posted metadata
+   * on the row and reopens a deal that was marked complete.
+   */
+  retroactive?: boolean;
 }
 
 /**
  * Default business rule (see docs/DATA_MODEL.md): paused payments are skipped, not compressed into
- * the remaining schedule. Every pending entry inside the pause window is marked "paused" (it will
- * never post) and an equal number of same-amount periods are appended after the current schedule
- * tail, following the existing cadence, so the deal's maturity date extends by exactly the paused
- * period count rather than the payoff amount silently shrinking.
+ * the remaining schedule. Every entry inside the pause window is marked "paused" (it will never
+ * post) and an equal number of same-amount periods are appended after the current schedule tail,
+ * following the existing cadence, so the deal's maturity date extends by exactly the paused period
+ * count rather than the payoff amount silently shrinking. By default only still-pending entries are
+ * eligible; pass `retroactive` to also reverse already-posted entries in a backdated window.
  */
-export function applyPause({ entries, pauseStart, resumeDate, frequency, weekday }: PauseParams): ScheduleEntry[] {
+export function applyPause({ entries, pauseStart, resumeDate, frequency, weekday, retroactive = false }: PauseParams): ScheduleEntry[] {
   const paused: ScheduleEntry[] = [];
   const untouched: ScheduleEntry[] = [];
 
   for (const entry of entries) {
+    const eligible = entry.status === "pending" || (retroactive && entry.status === "posted");
     const inWindow =
-      entry.status === "pending" &&
+      eligible &&
       entry.dueDate.getTime() >= pauseStart.getTime() &&
       (resumeDate === null || entry.dueDate.getTime() < resumeDate.getTime());
     if (inWindow) {
-      paused.push({ ...entry, status: "paused" });
+      // Clear any collected amount: a paused entry never really posted, so it must stop counting as paid.
+      paused.push({ ...entry, status: "paused", postedAmountCents: undefined });
     } else {
       untouched.push(entry);
     }
@@ -319,22 +331,39 @@ export interface LoweredPaymentParams {
   effectiveDate: Date;
   endDate: Date | null;
   adjustmentId: string;
+  /**
+   * When true, already-*posted* payments in the window are corrected down to the lower amount too
+   * (the broker is recording that past debits actually collected less than the schedule assumed).
+   * Both the scheduled and posted amount on those rows drop to the new figure so every downstream
+   * total -- calendar-"due" and actually-"posted" alike -- reflects the correction and the balance
+   * rises. A posted payment is only ever lowered, never raised, so a too-high `newAmount` is clamped.
+   */
+  retroactive?: boolean;
 }
 
 /**
- * Applies a lowered payment amount to pending entries within [effectiveDate, endDate). If endDate is
- * omitted the lower amount applies to all remaining pending entries indefinitely; the final entry
- * still absorbs whatever true balance remains (see buildEvenScheduleAmountsCents), so debt is never
- * silently forgiven -- it shows up as a larger-than-"lowered" final payment unless a human later
- * schedules a proper recast.
+ * Applies a lowered payment amount to entries within [effectiveDate, endDate). If endDate is omitted
+ * the lower amount applies to all remaining entries in the window indefinitely; the final pending
+ * entry still absorbs whatever true balance remains (see buildEvenScheduleAmountsCents), so debt is
+ * never silently forgiven -- it shows up as a larger-than-"lowered" final payment unless a human
+ * later schedules a proper recast. By default only pending entries change; pass `retroactive` to also
+ * correct already-posted entries in a backdated window.
  */
-export function applyLoweredPayment({ entries, newAmountCents, effectiveDate, endDate, adjustmentId }: LoweredPaymentParams): ScheduleEntry[] {
+export function applyLoweredPayment({ entries, newAmountCents, effectiveDate, endDate, adjustmentId, retroactive = false }: LoweredPaymentParams): ScheduleEntry[] {
   return entries.map((entry) => {
-    if (entry.status !== "pending") return entry;
     const inWindow =
       entry.dueDate.getTime() >= effectiveDate.getTime() && (endDate === null || entry.dueDate.getTime() < endDate.getTime());
     if (!inWindow) return entry;
-    return { ...entry, scheduledAmountCents: newAmountCents, adjustmentId };
+    if (entry.status === "pending") {
+      return { ...entry, scheduledAmountCents: newAmountCents, adjustmentId };
+    }
+    if (retroactive && entry.status === "posted") {
+      // Correct both the scheduled and collected figure down (never up) so due- and posted-based
+      // progress agree; the un-collected difference reappears as outstanding balance.
+      const corrected = Math.min(newAmountCents, entry.scheduledAmountCents);
+      return { ...entry, scheduledAmountCents: corrected, postedAmountCents: corrected, adjustmentId };
+    }
+    return entry;
   });
 }
 
