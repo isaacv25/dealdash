@@ -78,9 +78,12 @@ are not stored columns: `scheduledPaymentsCount`, `postedPaymentsCount`, `posted
 `duePaymentsCount`, `dueAmount`, and `scheduleEndDate`. `loadWorkspace` derives these once per page
 load by grouping the company's `PaymentScheduleEntry` rows (a status grouping for the posted/total
 counts and `_max(dueDate)` maturity date, plus a second grouping over entries with `dueDate <= now`
-for the due-by-calendar counts), so the funded board can show schedule-based repayment progress and a
-real end date per deal without a per-card query. They are undefined for deals with no generated
-schedule.
+**and status not in (`paused`, `skipped`)** for the due-by-calendar counts -- paused/skipped rows
+never collect, so they must not read as "should be in by now"), so the funded board can show
+schedule-based repayment progress and a real end date per deal without a per-card query. They are
+undefined for deals with no generated schedule. `computeDealScheduleSnapshot` (`schedule-service.ts`)
+computes the same six fields for a single deal, returned by the pause/lowered adjustment actions so
+the card can patch itself in place.
 
 `expectedEndDateForFundedDeal` (`calculations.ts`) is the display helper for a deal's maturity date:
 it returns `scheduleEndDate` when a schedule exists, and otherwise re-runs the schedule generator's
@@ -297,7 +300,29 @@ a documented reason" operations:
   missed payments into the remaining schedule -- if a different rule is ever needed, change
   `applyPause` in `schedule.ts` and update this paragraph.
 
-Both operations require a `reason` and write an `AuditEntry`.
+### Retroactive (backdated) adjustments
+
+Both operations accept a `retroactive` flag. By default an adjustment only ever touches still-`pending`
+entries, so a start date in the past silently affects nothing already collected. With `retroactive`
+on, the same window also reaches **already-`posted`** entries, letting a broker correct weeks/days that
+the cron optimistically posted at full amount:
+
+- **Retroactive lowered**: a posted entry in the window has both its `scheduledAmountCents` and
+  `postedAmountCents` lowered to the new figure (only ever lowered, never raised). The un-collected
+  difference reappears as outstanding balance.
+- **Retroactive pause**: a posted entry in the window is reversed to `paused` and its collected
+  metadata (`postedAmountCents`/`postedAt`/`postingSource`) cleared, so it stops counting as paid; the
+  reversed periods extend maturity at the tail like any pause.
+
+Because paused/reduced entries no longer represent collected money, the "due by calendar" progress
+roll-up (`loadWorkspace`'s due grouping, and `computeDealScheduleSnapshot`) **excludes `paused`/`skipped`
+rows** -- otherwise the optimistic due figure would mask the correction. A retroactive change that pulls
+a fully-paid deal back below its total also clears `scheduleCompletedAt` and resets `statusStage` to
+`active`. The adjustment actions return a fresh `DealScheduleSnapshot` (posted/due counts + amounts and
+the maturity date) so the funded card patches its balance, progress bar, and end date in place without a
+full reload.
+
+Both operations require a `reason` and write an `AuditEntry` (the `retroactive` flag is recorded in it).
 
 ## Balance override ("Override Calculated Balance")
 

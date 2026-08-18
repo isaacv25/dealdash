@@ -255,3 +255,77 @@ test("temporary payment reduction ends and future payments return to normal amou
   });
   assert.equal(result[0].scheduledAmountCents, 1000);
 });
+
+test("retroactive pause also reverses already-posted payments in the window", () => {
+  const existing: ScheduleEntry[] = [
+    { sequence: 1, dueDate: day("2026-07-06"), scheduledAmountCents: 1000, status: "posted", postedAmountCents: 1000 },
+    { sequence: 2, dueDate: day("2026-07-13"), scheduledAmountCents: 1000, status: "posted", postedAmountCents: 1000 },
+    { sequence: 3, dueDate: day("2026-07-20"), scheduledAmountCents: 1000, status: "pending" },
+  ];
+
+  const result = applyPause({
+    entries: existing,
+    pauseStart: day("2026-07-13"),
+    resumeDate: day("2026-07-20"),
+    frequency: "weekly",
+    weekday: 1,
+    retroactive: true,
+  });
+
+  // The posted 07-13 entry is reversed to paused, with its collected amount cleared.
+  const reversed = result.find((e) => e.sequence === 2);
+  assert.equal(reversed?.status, "paused");
+  assert.equal(reversed?.postedAmountCents, undefined);
+  // The posted 07-06 entry is outside the window -> left posted.
+  assert.equal(result.find((e) => e.sequence === 1)?.status, "posted");
+  // One paused period -> one tail period appended to extend maturity.
+  const pending = result.filter((e) => e.status === "pending");
+  assert.equal(pending.length, 2); // original 07-20 + 1 appended
+});
+
+test("a non-retroactive pause leaves already-posted payments untouched even inside the window", () => {
+  const existing: ScheduleEntry[] = [
+    { sequence: 1, dueDate: day("2026-07-13"), scheduledAmountCents: 1000, status: "posted", postedAmountCents: 1000 },
+  ];
+  const result = applyPause({ entries: existing, pauseStart: day("2026-07-13"), resumeDate: null, frequency: "weekly", weekday: 1 });
+  assert.equal(result[0].status, "posted");
+  assert.equal(result[0].postedAmountCents, 1000);
+});
+
+test("retroactive lowered payment corrects posted entries' scheduled and collected amounts down", () => {
+  const existing: ScheduleEntry[] = [
+    { sequence: 1, dueDate: day("2026-07-06"), scheduledAmountCents: 1000, status: "posted", postedAmountCents: 1000 },
+    { sequence: 2, dueDate: day("2026-07-13"), scheduledAmountCents: 1000, status: "posted", postedAmountCents: 1000 },
+    { sequence: 3, dueDate: day("2026-07-20"), scheduledAmountCents: 1000, status: "pending" },
+  ];
+
+  const result = applyLoweredPayment({
+    entries: existing,
+    newAmountCents: 400,
+    effectiveDate: day("2026-07-13"),
+    endDate: null,
+    adjustmentId: "adj_retro",
+    retroactive: true,
+  });
+
+  assert.equal(result[0].scheduledAmountCents, 1000); // before the window -> untouched
+  assert.equal(result[0].postedAmountCents, 1000);
+  assert.equal(result[1].scheduledAmountCents, 400); // posted-in-window -> both figures corrected down
+  assert.equal(result[1].postedAmountCents, 400);
+  assert.equal(result[2].scheduledAmountCents, 400); // pending-in-window -> scheduled lowered
+});
+
+test("retroactive lowered payment never raises a posted amount above what was scheduled", () => {
+  const existing: ScheduleEntry[] = [
+    { sequence: 1, dueDate: day("2026-07-13"), scheduledAmountCents: 1000, status: "posted", postedAmountCents: 1000 },
+  ];
+  const result = applyLoweredPayment({
+    entries: existing,
+    newAmountCents: 5000, // absurdly high "lowered" amount
+    effectiveDate: day("2026-07-13"),
+    endDate: null,
+    adjustmentId: "adj_clamp",
+    retroactive: true,
+  });
+  assert.equal(result[0].postedAmountCents, 1000); // clamped to the original scheduled amount
+});

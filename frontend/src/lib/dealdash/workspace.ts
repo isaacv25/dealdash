@@ -337,7 +337,9 @@ export async function loadWorkspace(companyId: string): Promise<SeedDataset> {
         }),
         prisma.paymentScheduleEntry.groupBy({
           by: ["fundedDealId"],
-          where: { fundedDealId: { in: dealIds }, dueDate: { lte: dueCutoff } },
+          // Paused/skipped entries never collect, so they must not count toward "what should be in by
+          // now" -- otherwise a retroactively paused/reduced past payment would still read as paid.
+          where: { fundedDealId: { in: dealIds }, dueDate: { lte: dueCutoff }, status: { notIn: ["paused", "skipped"] } },
           _count: { _all: true },
           _sum: { scheduledAmountCents: true },
         }),

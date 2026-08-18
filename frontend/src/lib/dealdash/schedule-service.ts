@@ -3,7 +3,7 @@ import type { FundedDeal as DealRow, PaymentScheduleEntry as EntryRow } from "@p
 import { prisma } from "@/lib/db/prisma";
 import { calculateDeal, centsToDollars, dollarsToCents, validateDealCalculationInput } from "./finance";
 import { applyLoweredPayment, applyPause, buildSchedule, firstPaymentAnchor, recastSchedule, type ScheduleEntry } from "./schedule";
-import { isDueInEastern } from "./timezone";
+import { easternDateKey, isDueInEastern } from "./timezone";
 import type { PaymentFrequency } from "./types";
 
 /**
@@ -223,6 +223,8 @@ export interface LoweredPaymentInput extends DealAuditContext {
   newAmount: number;
   effectiveDate: Date;
   endDate: Date | null;
+  /** Also correct already-posted payments in the window (a backdated reduction). See applyLoweredPayment. */
+  retroactive?: boolean;
 }
 
 export async function applyLoweredPaymentAdjustment(dealId: string, input: LoweredPaymentInput) {
@@ -234,7 +236,7 @@ export async function applyLoweredPaymentAdjustment(dealId: string, input: Lower
     throw new Error("A reason is required for a lowered payment adjustment.");
   }
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const deal = await tx.fundedDeal.findUniqueOrThrow({ where: { id: dealId } });
     const adjustment = await tx.paymentAdjustment.create({
       data: {
@@ -255,16 +257,32 @@ export async function applyLoweredPaymentAdjustment(dealId: string, input: Lower
       effectiveDate: input.effectiveDate,
       endDate: input.endDate,
       adjustmentId: adjustment.id,
+      retroactive: input.retroactive ?? false,
     });
 
+    // A retroactive reduction lowers a *posted* row's collected amount -- track that so we can reopen a
+    // deal the cron had marked fully paid, since it no longer is.
+    let loweredAPostedRow = false;
     for (const entry of updated) {
       const row = existingRows.find((r) => r.sequence === entry.sequence);
-      if (row && row.scheduledAmountCents !== entry.scheduledAmountCents) {
+      if (!row) continue;
+      const scheduledChanged = row.scheduledAmountCents !== entry.scheduledAmountCents;
+      const postedChanged = (row.postedAmountCents ?? null) !== (entry.postedAmountCents ?? null);
+      if (scheduledChanged || postedChanged) {
         await tx.paymentScheduleEntry.update({
           where: { id: row.id },
-          data: { scheduledAmountCents: entry.scheduledAmountCents, adjustmentId: entry.adjustmentId ?? null },
+          data: {
+            scheduledAmountCents: entry.scheduledAmountCents,
+            postedAmountCents: entry.postedAmountCents ?? null,
+            adjustmentId: entry.adjustmentId ?? null,
+          },
         });
+        if (row.status === "posted" && postedChanged) loweredAPostedRow = true;
       }
+    }
+
+    if (loweredAPostedRow && deal.scheduleCompletedAt) {
+      await tx.fundedDeal.update({ where: { id: dealId }, data: { scheduleCompletedAt: null, statusStage: "active" } });
     }
 
     await writeAuditEntry(
@@ -272,18 +290,20 @@ export async function applyLoweredPaymentAdjustment(dealId: string, input: Lower
       dealId,
       "payment-adjustment",
       { contractualPaymentAmount: deal.paymentAmount },
-      { type: "lowered", newAmount: input.newAmount, endDate: input.endDate },
+      { type: "lowered", newAmount: input.newAmount, endDate: input.endDate, retroactive: input.retroactive ?? false },
       input,
       input.effectiveDate,
     );
-
-    return adjustment;
   });
+
+  return computeDealScheduleSnapshot(dealId);
 }
 
 export interface PauseInput extends DealAuditContext {
   pauseStart: Date;
   resumeDate: Date | null;
+  /** Also reverse already-posted payments in the window (a backdated pause). See applyPause. */
+  retroactive?: boolean;
 }
 
 export async function applyPauseAdjustment(dealId: string, input: PauseInput) {
@@ -292,7 +312,7 @@ export async function applyPauseAdjustment(dealId: string, input: PauseInput) {
     throw new Error("A reason is required for a payment pause.");
   }
 
-  return prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     const deal = await tx.fundedDeal.findUniqueOrThrow({ where: { id: dealId } });
     const adjustment = await tx.paymentAdjustment.create({
       data: {
@@ -312,17 +332,27 @@ export async function applyPauseAdjustment(dealId: string, input: PauseInput) {
       resumeDate: input.resumeDate,
       frequency: deal.paymentFrequency as PaymentFrequency,
       weekday: deal.paymentWeekday,
+      retroactive: input.retroactive ?? false,
     });
 
     // Reconcile: update changed rows, insert newly appended tail rows.
     const existingBySequence = new Map(existingRows.map((r) => [r.sequence, r]));
+    let reversedAPostedRow = false;
     for (const entry of updated) {
       const row = existingBySequence.get(entry.sequence);
       if (row) {
         if (row.status !== entry.status || row.adjustmentId !== (entry.adjustmentId ?? null)) {
+          if (entry.status === "paused" && row.status === "posted") reversedAPostedRow = true;
           await tx.paymentScheduleEntry.update({
             where: { id: row.id },
-            data: { status: entry.status, adjustmentId: entry.status === "paused" ? adjustment.id : row.adjustmentId },
+            data: {
+              status: entry.status,
+              adjustmentId: entry.status === "paused" ? adjustment.id : row.adjustmentId,
+              // Reversing a posted entry to paused clears the collected metadata so it no longer counts as paid.
+              ...(entry.status === "paused" && row.status === "posted"
+                ? { postedAmountCents: null, postedAt: null, postingSource: null }
+                : {}),
+            },
           });
         }
       } else {
@@ -338,18 +368,22 @@ export async function applyPauseAdjustment(dealId: string, input: PauseInput) {
       }
     }
 
+    if (reversedAPostedRow && deal.scheduleCompletedAt) {
+      await tx.fundedDeal.update({ where: { id: dealId }, data: { scheduleCompletedAt: null, statusStage: "active" } });
+    }
+
     await writeAuditEntry(
       tx,
       dealId,
       "payment-adjustment",
       null,
-      { type: "pause", resumeDate: input.resumeDate },
+      { type: "pause", resumeDate: input.resumeDate, retroactive: input.retroactive ?? false },
       input,
       input.pauseStart,
     );
-
-    return adjustment;
   });
+
+  return computeDealScheduleSnapshot(dealId);
 }
 
 export interface BalanceOverrideInput extends DealAuditContext {
@@ -531,6 +565,59 @@ export async function getCalculatedBalance(dealId: string): Promise<CalculatedBa
 export async function getScheduleForDeal(dealId: string) {
   const rows = await prisma.paymentScheduleEntry.findMany({ where: { fundedDealId: dealId }, orderBy: { sequence: "asc" } });
   return rows;
+}
+
+/**
+ * The subset of a funded deal's schedule aggregates that the funded board renders (repayment
+ * progress + maturity date). Mirrors exactly the per-deal roll-up loadWorkspace computes, so the
+ * client can patch a single deal in place after an adjustment and see the balance/end date move
+ * immediately -- without a full workspace reload. Amounts are in dollars; scheduleEndDate is ISO.
+ *
+ * "Due" here matches the workspace and the cron poster: entries whose calendar date is on or before
+ * today in America/New_York, EXCLUDING paused/skipped rows -- those never collect, so counting them
+ * as "should be in by now" would mask exactly the retroactive corrections this feature exists to make.
+ */
+export interface DealScheduleSnapshot {
+  scheduledPaymentsCount: number;
+  postedPaymentsCount: number;
+  postedAmount: number;
+  duePaymentsCount: number;
+  dueAmount: number;
+  scheduleEndDate: string | null;
+}
+
+export async function computeDealScheduleSnapshot(dealId: string, now = new Date()): Promise<DealScheduleSnapshot> {
+  const rows = await prisma.paymentScheduleEntry.findMany({ where: { fundedDealId: dealId } });
+  const dueCutoff = new Date(`${easternDateKey(now)}T00:00:00.000Z`);
+
+  let scheduledPaymentsCount = 0;
+  let postedPaymentsCount = 0;
+  let postedAmountCents = 0;
+  let duePaymentsCount = 0;
+  let dueAmountCents = 0;
+  let endDate: Date | undefined;
+
+  for (const row of rows) {
+    scheduledPaymentsCount += 1;
+    if (row.status === "posted") {
+      postedPaymentsCount += 1;
+      postedAmountCents += row.postedAmountCents ?? row.scheduledAmountCents;
+    }
+    if (row.status !== "paused" && row.status !== "skipped" && row.dueDate.getTime() <= dueCutoff.getTime()) {
+      duePaymentsCount += 1;
+      dueAmountCents += row.scheduledAmountCents;
+    }
+    if (!endDate || row.dueDate.getTime() > endDate.getTime()) endDate = row.dueDate;
+  }
+
+  return {
+    scheduledPaymentsCount,
+    postedPaymentsCount,
+    postedAmount: postedAmountCents / 100,
+    duePaymentsCount,
+    dueAmount: dueAmountCents / 100,
+    scheduleEndDate: endDate ? endDate.toISOString() : null,
+  };
 }
 
 export async function getAuditHistoryForDeal(dealId: string) {
