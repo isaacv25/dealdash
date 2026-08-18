@@ -338,13 +338,14 @@ function AdjustmentsForm({ deal, onApplied }: { deal: FundedDeal; onApplied: () 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  // Captured once at mount (not read during render) so the backdated hint stays a pure computation.
-  const [mountedAt] = useState(() => Date.now());
+  // Today's calendar date (YYYY-MM-DD), captured once at mount so the backdated hint is a pure,
+  // date-only comparison -- "today" must never read as backdated just because it's past UTC midnight.
+  const [todayInput] = useState(() => toDateInput(new Date().toISOString()));
 
-  // The start date is in the past -> the adjustment reaches back over payments the cron already
-  // posted, so the retroactive toggle becomes relevant. (It's harmless when off; this just surfaces it.)
+  // The start date is an earlier calendar day than today -> the adjustment reaches back over payments
+  // the cron already posted, so the retroactive toggle becomes relevant. ISO date strings sort by date.
   const startIso = dateInputToIso(effectiveDate);
-  const isBackdated = startIso ? new Date(startIso).getTime() < mountedAt : false;
+  const isBackdated = Boolean(effectiveDate) && effectiveDate < todayInput;
 
   async function submit() {
     setError(null);
