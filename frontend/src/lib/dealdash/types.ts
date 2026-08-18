@@ -1,7 +1,19 @@
 export type PaymentFrequency = "daily" | "weekly" | "monthly";
 export type TermUnit = "days" | "weeks" | "months";
-export type CommissionStatus = "pending" | "paid-out" | "clawback";
-export type FundedTag = "clawback" | "paid-epa" | "paid-in-full" | "active" | "commission" | "potential-renewal";
+export type CommissionStatus = "pending" | "paid-out" | "paid-epa" | "clawback";
+/**
+ * The card-level "state" tag for a funded deal -- mutually exclusive, drives both card tint and
+ * progress-bar color. See tagsForFundedDeal (views.tsx) for the derivation rules.
+ *   - default : merchant has defaulted (RED). Financial-term "default", not "the default option."
+ *   - active  : normal paying deal (BLUE). The auto-applied state for a freshly funded deal.
+ *   - paid    : fully paid off (GREEN). Auto-derived once the persisted schedule completes.
+ *   - paused  : temporarily on hold (ORANGE). Freezes progress -- calendar-due payments do not
+ *               advance the balance until the tag is removed. See progressForFundedDeal.
+ *   - slow    : merchant paying behind schedule (ORANGE).
+ * The yellow "renewal" state is intentionally NOT a manual tag -- it fires automatically at the
+ * renewal date the broker configures under Settings > System.
+ */
+export type FundedTag = "default" | "active" | "paid" | "paused" | "slow";
 /**
  * mca: the default deal shape (factorRate/termValue/termUnit/paymentFrequency).
  * heloc: uses aprPercent + termYears instead; a simple amortized monthly payment.

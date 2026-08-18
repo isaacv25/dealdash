@@ -96,15 +96,16 @@ const pipelineStageColor: Record<PipelineStage, string> = {
   renewal: "var(--accent)",
 };
 
-// "potential-renewal" is deliberately NOT a manually-togglable tag -- it's purely derived from the
-// renewal date. Ethan wants it to appear only when the deal actually crosses that threshold, not
-// something a broker can force on/off from the card.
-const fundedTagOptions: Array<{ key: FundedTag; label: string }> = [
-  { key: "clawback", label: "Clawback" },
-  { key: "paid-epa", label: "Paid + EPA" },
-  { key: "paid-in-full", label: "Paid in full" },
-  { key: "active", label: "Active" },
-  { key: "commission", label: "Commission" },
+// Mutually exclusive card-state tags: clicking one replaces the currently-set tag. Yellow
+// "renewal" state (see tagsForFundedDeal) is deliberately NOT here -- it's purely derived from the
+// broker-configured renewal date. Clawback / Paid + EPA are on the Commission Status dropdown now,
+// not tags -- they describe the *commission* payout state, not the deal itself.
+const fundedTagOptions: Array<{ key: FundedTag; label: string; hint: string }> = [
+  { key: "default", label: "Default", hint: "Merchant has defaulted (red)" },
+  { key: "active", label: "Active", hint: "Normal paying deal (blue)" },
+  { key: "paid", label: "Paid", hint: "Fully paid off (green)" },
+  { key: "paused", label: "Paused", hint: "On hold -- balance freezes (orange)" },
+  { key: "slow", label: "Slow", hint: "Paying behind schedule (orange)" },
 ];
 
 const dealTypeOptions: Array<{ key: FundedDealType; label: string }> = [
@@ -347,6 +348,7 @@ function CommissionBadge({ status }: { status: FundedDeal["commissionStatus"] })
   const config = {
     pending: { tone: "bg-white text-[var(--foreground)]", label: "Commission Pending" },
     "paid-out": { tone: "bg-[var(--success)]/12 text-[var(--success)]", label: "Commission Paid Out" },
+    "paid-epa": { tone: "bg-[var(--success)]/12 text-[var(--success)]", label: "Commission Paid + EPA" },
     clawback: { tone: "bg-[var(--danger)]/12 text-[var(--danger)]", label: "Commission Clawback" },
   }[status];
 
@@ -369,58 +371,81 @@ function CommissionBadge({ status }: { status: FundedDeal["commissionStatus"] })
  * Manual `fundedTags` (from the tag toggles at the bottom of the card) let a broker force any state,
  * so the derived rules and the manual overrides intentionally use OR everywhere.
  */
-function tagsForFundedDeal(deal: FundedDeal, renewalFraction?: number): FundedTag[] {
-  const manual = new Set<FundedTag>(deal.fundedTags || []);
-  const raw = `${deal.statusRaw} ${deal.notes}`.toLowerCase();
-
-  // Exclusive states, in priority order -- return early, tag list is JUST this one tag.
-  if (deal.statusStage === "clawback" || deal.commissionStatus === "clawback" || manual.has("clawback") || raw.includes("clawback")) {
-    return ["clawback"];
-  }
-  if (manual.has("paid-epa") || raw.includes("epa")) {
-    return ["paid-epa"];
-  }
-
-  const progress = progressForFundedDeal(deal);
-  const commissionPaid = deal.commissionStatus === "paid-out" || manual.has("commission");
-  const paidInFull = manual.has("paid-in-full") || (progress.totalPeriods > 0 && progress.paymentsRemaining === 0);
-
-  if (paidInFull) {
-    return commissionPaid ? ["paid-in-full", "commission"] : ["paid-in-full"];
-  }
-
-  // Active state. Potential renewal is purely derived (no manual override) -- it switches on the
-  // moment the renewal date arrives, using the viewer's configured renewalTermFraction from Settings
-  // > System. Brokers pitch renewals at that midpoint, so that's when the card turns yellow.
-  const renewalDate = renewalDateForFundedDeal(deal, renewalFraction);
-  const pastRenewal = renewalDate ? Date.now() >= new Date(renewalDate).getTime() : false;
-  const result: FundedTag[] = ["active"];
-  if (pastRenewal) result.push("potential-renewal");
-  if (commissionPaid) result.push("commission");
-  return result;
+/** Legacy fundedTag values still present on older deals in the DB -- we map/drop them here so the
+ *  UI stays coherent without needing a data migration.
+ *    - "paid-in-full" was the old paid state -> becomes "paid".
+ *    - "clawback" / "paid-epa" / "commission" now live on CommissionStatus, so their tag copies get
+ *      dropped (their meaning survives via commissionStatus, which is set on those deals too).
+ *    - "potential-renewal" is fully derived now, so any old manual set gets dropped.
+ *    - anything else unknown gets dropped too.
+ */
+const KNOWN_TAGS = new Set<FundedTag>(["default", "active", "paid", "paused", "slow"]);
+function normalizeManualTag(tag: string): FundedTag | null {
+  if (tag === "paid-in-full") return "paid";
+  if ((KNOWN_TAGS as Set<string>).has(tag)) return tag as FundedTag;
+  return null;
 }
 
-function fundedTintClass(tags: FundedTag[]) {
-  // Card color follows the same exclusive-then-priority order as tagsForFundedDeal itself.
-  if (tags.includes("clawback")) return "border-red-200 bg-red-50/88";
-  if (tags.includes("paid-epa")) return "border-emerald-200 bg-emerald-50/88";
-  if (tags.includes("paid-in-full")) return "border-emerald-200 bg-emerald-50/88";
-  if (tags.includes("potential-renewal")) return "border-amber-200 bg-amber-50/88";
-  if (tags.includes("active")) return "border-blue-200 bg-blue-50/88";
+/**
+ * Derives the card's state. Returns the primary FundedTag plus a boolean for the renewal-yellow
+ * overlay -- kept as a struct (not a magic tag) so the FundedTag type stays honest to the 5 real
+ * broker-facing tag options.
+ *
+ * Primary state priority:
+ *   1. Manual tag override (broker's explicit judgment always wins if set).
+ *   2. Derived "paid" once the persisted schedule is completed.
+ *   3. Default to "active".
+ *
+ * showsRenewalOverlay is purely derived from the renewal date; it fires only while the deal is
+ * still working (active or slow) -- a paid, defaulted, or paused deal doesn't need a renewal pitch.
+ */
+interface FundedDealState {
+  primary: FundedTag;
+  showsRenewalOverlay: boolean;
+}
+function tagsForFundedDeal(deal: FundedDeal, renewalFraction?: number): FundedDealState {
+  const manualFromDeal = (deal.fundedTags ?? [])
+    .map((raw) => normalizeManualTag(raw))
+    .filter((tag): tag is FundedTag => tag !== null);
+  const manual = manualFromDeal[0] ?? null;
+
+  const progress = progressForFundedDeal(deal);
+  const scheduleComplete = Boolean(deal.scheduleCompletedAt) || (progress.totalPeriods > 0 && progress.paymentsRemaining === 0);
+
+  const primary: FundedTag = manual ?? (scheduleComplete ? "paid" : "active");
+
+  const renewalDate = renewalDateForFundedDeal(deal, renewalFraction);
+  const pastRenewal = renewalDate ? Date.now() >= new Date(renewalDate).getTime() : false;
+  const showsRenewalOverlay = pastRenewal && (primary === "active" || primary === "slow");
+
+  return { primary, showsRenewalOverlay };
+}
+
+/** Card tint per state. Renewal overlay wins the color slot when active; primary state wins otherwise. */
+function fundedTintClass(state: FundedDealState) {
+  if (state.showsRenewalOverlay) return "border-amber-200 bg-amber-50/88";
+  if (state.primary === "default") return "border-red-200 bg-red-50/88";
+  if (state.primary === "paid") return "border-emerald-200 bg-emerald-50/88";
+  if (state.primary === "paused" || state.primary === "slow") return "border-orange-200 bg-orange-50/88";
+  if (state.primary === "active") return "border-blue-200 bg-blue-50/88";
   return "border-white/80 bg-white/80";
 }
 
-function tagBadgeClass(tag: FundedTag) {
-  if (tag === "clawback") return "bg-red-100 text-red-700";
-  if (tag === "paid-in-full") return "bg-emerald-100 text-emerald-700";
-  if (tag === "paid-epa") return "bg-emerald-100 text-emerald-700";
-  if (tag === "active") return "bg-blue-100 text-blue-700";
-  if (tag === "commission") return "bg-emerald-100 text-emerald-700";
-  return "bg-amber-100 text-amber-700"; // potential-renewal
+/** Progress-bar fill class matching the tint above -- kept in one place so the bar and card can
+ *  never disagree. Renewal yellow wins the bar too. */
+function progressFillClassForState(state: FundedDealState) {
+  if (state.showsRenewalOverlay) return "bg-amber-500";
+  if (state.primary === "default") return "bg-[var(--danger)]";
+  if (state.primary === "paid") return "bg-[var(--success)]";
+  if (state.primary === "paused" || state.primary === "slow") return "bg-orange-500";
+  return "bg-[var(--accent-strong)]"; // active + fallback
 }
 
-function toggleFundedTag(tags: FundedTag[], tag: FundedTag) {
-  return tags.includes(tag) ? tags.filter((current) => current !== tag) : [...tags, tag];
+function tagBadgeClass(tag: FundedTag) {
+  if (tag === "default") return "bg-red-100 text-red-700";
+  if (tag === "paid") return "bg-emerald-100 text-emerald-700";
+  if (tag === "paused" || tag === "slow") return "bg-orange-100 text-orange-700";
+  return "bg-blue-100 text-blue-700"; // active
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -456,11 +481,15 @@ export function DashboardView() {
   const metrics = useMemo(() => {
     const fundedVolume = data.fundedDeals.reduce((sum, deal) => sum + deal.fundedAmount, 0);
     const commission = data.fundedDeals.reduce((sum, deal) => sum + deal.commissionAmount, 0);
-    // Sum of commission dollars where commissionStatus has flipped to "paid-out" -- the
-    // "money actually collected" KPI, so clicking a deal's Commission tag (which also flips its
-    // status) is visibly reflected on the dashboard the very next render.
+    // Sum of commission dollars for every "paid-collected" bucket: Paid Out and Paid + EPA both
+    // represent money actually received by the broker (EPA is an early-payoff bonus on top of a
+    // paid-out commission, not a different lifecycle). Clawback stays excluded -- that's money
+    // returned. This is the "cash in hand" KPI the dashboard surfaces.
     const commissionPaidOut = data.fundedDeals.reduce(
-      (sum, deal) => (deal.commissionStatus === "paid-out" ? sum + deal.commissionAmount : sum),
+      (sum, deal) =>
+        deal.commissionStatus === "paid-out" || deal.commissionStatus === "paid-epa"
+          ? sum + deal.commissionAmount
+          : sum,
       0,
     );
     const grossPayback = data.fundedDeals.reduce(
@@ -830,12 +859,14 @@ export function FundedProgressView() {
     [data.fundedDeals, deferredQuery, activeMonth],
   );
 
+  // Filter chips + counts now count by the deal's PRIMARY tag (mutually exclusive), so a deal is
+  // counted exactly once. The renewal-overlay isn't a filterable tag -- it's a card-color state, not
+  // a broker-facing "filter my deals by renewal" concept.
   const tagCounts = useMemo(() => {
     const counts = new Map<FundedTag, number>();
     for (const deal of monthAndQueryFilteredDeals) {
-      for (const tag of tagsForFundedDeal(deal, renewalFraction)) {
-        counts.set(tag, (counts.get(tag) ?? 0) + 1);
-      }
+      const { primary } = tagsForFundedDeal(deal, renewalFraction);
+      counts.set(primary, (counts.get(primary) ?? 0) + 1);
     }
     return counts;
   }, [monthAndQueryFilteredDeals, renewalFraction]);
@@ -843,8 +874,9 @@ export function FundedProgressView() {
   const filteredDeals = useMemo(
     () =>
       monthAndQueryFilteredDeals.filter((deal) => {
-        const dealTags = tagsForFundedDeal(deal, renewalFraction);
-        return activeTags.size === 0 || Array.from(activeTags).every((tag) => dealTags.includes(tag));
+        if (activeTags.size === 0) return true;
+        const { primary } = tagsForFundedDeal(deal, renewalFraction);
+        return activeTags.has(primary);
       }),
     [monthAndQueryFilteredDeals, activeTags, renewalFraction],
   );
@@ -997,7 +1029,9 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
   // leave hidden-but-tabbable form controls in the tab order.
   const [everOpened, setEverOpened] = useState(false);
 
-  const tags = tagsForFundedDeal(deal, viewer.renewalTermFraction);
+  const state = tagsForFundedDeal(deal, viewer.renewalTermFraction);
+  // For the summary-badge row we render the primary tag plus (when appropriate) a "Renewal" pill.
+  const primaryTagOption = fundedTagOptions.find((option) => option.key === state.primary);
   const progress = progressForFundedDeal(deal);
   const renewalDate = renewalDateForFundedDeal(deal, viewer.renewalTermFraction);
   const endDate = expectedEndDateForFundedDeal(deal);
@@ -1038,15 +1072,12 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
     updateFundedDeal(deal.id, { ...patch, ...derived });
   }
 
-  const progressFillClass =
-    deal.statusStage === "paid-out" ? "bg-[var(--success)]"
-    : deal.statusStage === "clawback" ? "bg-[var(--danger)]"
-    : deal.statusStage === "slow-pay" ? "bg-[var(--warn)]"
-    : "bg-[var(--accent-strong)]";
+  // Progress-bar color derives from the same state as card tint so the two can't disagree.
+  const progressFillClass = progressFillClassForState(state);
 
   return (
     <article
-      className={`dd-rise dd-hover-lift overflow-hidden rounded-[1.75rem] border shadow-[0_8px_32px_rgba(21,42,74,0.07)] ${fundedTintClass(tags)}`}
+      className={`dd-rise dd-hover-lift overflow-hidden rounded-[1.75rem] border shadow-[0_8px_32px_rgba(21,42,74,0.07)] ${fundedTintClass(state)}`}
       // Stagger the entrance a touch per row (capped) so the list cascades in instead of popping.
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
     >
@@ -1065,11 +1096,12 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge stage={deal.statusStage} />
               <CommissionBadge status={deal.commissionStatus} />
-              {tags.map((tag) => (
-                <span key={tag} className={`pill text-xs ${tagBadgeClass(tag)}`}>
-                  {fundedTagOptions.find((option) => option.key === tag)?.label ?? tag}
-                </span>
-              ))}
+              {primaryTagOption && (
+                <span className={`pill text-xs ${tagBadgeClass(state.primary)}`}>{primaryTagOption.label}</span>
+              )}
+              {state.showsRenewalOverlay && (
+                <span className="pill text-xs bg-amber-100 text-amber-700">Renewal</span>
+              )}
             </div>
             <p className="mt-2 truncate text-base font-semibold">{deal.businessName || "Untitled deal"}</p>
             <p className="mt-0.5 truncate text-sm text-[var(--muted)]">
@@ -1475,6 +1507,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                 >
                   <option value="pending">Pending</option>
                   <option value="paid-out">Paid Out</option>
+                  <option value="paid-epa">Paid + EPA</option>
                   <option value="clawback">Clawback</option>
                 </select>
               </DealField>
@@ -1487,34 +1520,30 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
                 />
               </DealField>
               <div className="col-span-2 flex flex-col gap-2 sm:col-span-4">
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted)]">Tags</span>
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--muted)]">Tag</span>
+                <p className="text-xs text-[var(--muted)]">
+                  A deal is exactly one of these at a time. Renewal (yellow) is not selectable here --
+                  it auto-appears once the deal reaches the renewal threshold in Settings &gt; System.
+                </p>
                 <div className="flex flex-wrap gap-2">
                   {fundedTagOptions.map((tag) => {
-                    const persistedTags = deal.fundedTags || [];
-                    // "selected" mirrors whatever the card is actually showing (from the derived
-                    // `tags` above), not just what's been manually toggled -- so an auto-derived Active
-                    // shows highlighted here too, no more confusion between "tag showing" and "toggle
-                    // lit up".
-                    const selected = tags.includes(tag.key);
+                    // Selected mirrors the derived primary state so an auto-"active" or auto-"paid"
+                    // deal has its correct chip lit up even when the broker never clicked anything.
+                    const selected = state.primary === tag.key;
                     return (
                       <button
                         key={tag.key}
                         className={`pill transition ${selected ? tagBadgeClass(tag.key) : "bg-white/72 text-[var(--muted)] hover:bg-white"}`}
                         onClick={() => {
-                          if (tag.key === "commission") {
-                            // Commission tag click IS the "commission paid out" action, not just a
-                            // decorative tag toggle. Flipping commissionStatus makes it show up in
-                            // the dashboard's Paid Out KPI + the top-of-card "Commission Paid Out"
-                            // badge, so the same click has one consistent effect across the app.
-                            updateFundedDeal(deal.id, {
-                              commissionStatus: deal.commissionStatus === "paid-out" ? "pending" : "paid-out",
-                            });
-                            return;
-                          }
-                          // Everything else stays a plain manual override on fundedTags.
-                          updateFundedDeal(deal.id, { fundedTags: toggleFundedTag(persistedTags, tag.key) });
+                          // Radio behavior: clicking a tag sets it as the SOLE tag on the deal
+                          // (mutually exclusive). Clicking the already-selected tag clears the
+                          // override and lets tagsForFundedDeal fall back to its derived default
+                          // ("paid" once schedule completes, else "active").
+                          const nextTags: FundedTag[] = selected ? [] : [tag.key];
+                          updateFundedDeal(deal.id, { fundedTags: nextTags });
                         }}
                         type="button"
+                        title={tag.hint}
                       >
                         {tag.label}
                       </button>
