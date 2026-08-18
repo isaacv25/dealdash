@@ -89,11 +89,14 @@ function LiveCalculationPreview({ deal }: { deal: FundedDeal }) {
         paymentFrequency: deal.paymentFrequency,
         syndicationPercent: deal.syndicationPercent * 100,
       }),
-    [deal.fundedAmount, deal.factorRate, deal.termValue, deal.paymentFrequency],
+    [deal.fundedAmount, deal.factorRate, deal.termValue, deal.paymentFrequency, deal.syndicationPercent],
   );
 
   const [flash, setFlash] = useState(false);
   useEffect(() => {
+    // This is a deliberately tiny local animation state, triggered only when the derived payment
+    // math changes, so recalculations feel alive without persisting anything.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFlash(true);
     const timer = setTimeout(() => setFlash(false), 500);
     return () => clearTimeout(timer);

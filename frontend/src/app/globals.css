@@ -37,21 +37,42 @@
 }
 
 /* A handful of surfaces (deal cards, fields, filter chips) intentionally keep their literal light
-   backgrounds (bg-white/NN, the pale funded-deal tint colors) in every theme rather than swapping to
-   --card, so a Paused deal still reads as "the orange one" whether you're in light or dark mode.
-   Text inside those surfaces isn't styled per-element -- it just inherits --foreground/--muted -- so
-   without this, dark mode's near-white --foreground sits on a near-white card and disappears.
-   Match only the opacity-variant classes (bg-white/XX, not bare bg-white which might be on unrelated
-   elements like nav). Pill labels with their own explicit text-*-700 classes are unaffected. */
-:root[data-theme="dark"] [class*="bg-white/"],
-:root[data-theme="dark"] [class*="bg-red-50/"],
-:root[data-theme="dark"] [class*="bg-emerald-50/"],
-:root[data-theme="dark"] [class*="bg-blue-50/"],
-:root[data-theme="dark"] [class*="bg-orange-50/"],
-:root[data-theme="dark"] [class*="bg-amber-50/"] {
+   backgrounds in every theme rather than swapping to --card, so a Paused deal still reads as "the
+   orange one" whether you're in light or dark mode. Keep this list exact: substring selectors like
+   [class*="bg-white/"] also match hover:bg-white/70 and can make dark-sidebar nav labels turn black
+   before hover. */
+:root[data-theme="dark"] [class~="bg-white/60"],
+:root[data-theme="dark"] [class~="bg-white/66"],
+:root[data-theme="dark"] [class~="bg-white/70"],
+:root[data-theme="dark"] [class~="bg-white/72"],
+:root[data-theme="dark"] [class~="bg-white/76"],
+:root[data-theme="dark"] [class~="bg-white/78"],
+:root[data-theme="dark"] [class~="bg-white/80"],
+:root[data-theme="dark"] [class~="bg-white/82"],
+:root[data-theme="dark"] [class~="bg-white/86"],
+:root[data-theme="dark"] [class~="bg-white/88"],
+:root[data-theme="dark"] [class~="bg-white/90"],
+:root[data-theme="dark"] [class~="lg:bg-white/70"],
+:root[data-theme="dark"] [class~="bg-red-50/88"],
+:root[data-theme="dark"] [class~="bg-emerald-50/88"],
+:root[data-theme="dark"] [class~="bg-blue-50/88"],
+:root[data-theme="dark"] [class~="bg-orange-50/88"],
+:root[data-theme="dark"] [class~="bg-amber-50/88"] {
   --foreground: #0f172a;
   --muted: #55607a;
   color: var(--foreground);
+}
+
+:root[data-theme="dark"] .sidebar-nav-link {
+  color: var(--foreground);
+}
+
+:root[data-theme="dark"] .sidebar-nav-link[aria-current="page"] {
+  color: var(--accent-strong);
+}
+
+:root[data-theme="dark"] .sidebar-nav-link:not([aria-current="page"]):hover {
+  color: #0f172a;
 }
 
 @theme inline {

@@ -24,6 +24,9 @@ export function SystemSettingsSection({ initialRenewalPercent }: { initialRenewa
   // component and the DOM never disagree.
   useEffect(() => {
     const attr = document.documentElement.getAttribute("data-theme");
+    // The blocking root script owns the first paint; this effect only mirrors that external DOM
+    // state into the segmented control after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (attr === "dark") setTheme("dark");
     else setTheme("light");
   }, []);

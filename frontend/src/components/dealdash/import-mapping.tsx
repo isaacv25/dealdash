@@ -32,17 +32,19 @@ type PendingImport = {
   filename: string;
   headers: string[];
   rows: Record<string, string>[];
+  uploadedAtIso: string;
   destination: ImportDestination;
   mapping: ColumnMapping;
 };
 
-function buildPendingImport(file: { name: string }, headers: string[], rows: Record<string, string>[], key: string): PendingImport {
+function buildPendingImport(file: { name: string }, headers: string[], rows: Record<string, string>[], key: string, uploadedAtIso: string): PendingImport {
   const destination = guessDestination(headers);
   return {
     key,
     filename: file.name,
     headers,
     rows,
+    uploadedAtIso,
     destination,
     mapping: guessColumnMapping(headers, IMPORT_FIELD_DEFS[destination]),
   };
@@ -55,11 +57,12 @@ export function ImportsView() {
   async function handleFiles(fileList: FileList | null) {
     if (!fileList) return;
     const uploadedAt = Date.now();
+    const uploadedAtIso = new Date(uploadedAt).toISOString();
     const next = await Promise.all(
       Array.from(fileList).map(async (file, index) => {
         const content = await file.text();
         const { headers, rows } = parseCsvText(content);
-        return buildPendingImport(file, headers, rows, `${file.name}-${uploadedAt}-${index}`);
+        return buildPendingImport(file, headers, rows, `${file.name}-${uploadedAt}-${index}`, uploadedAtIso);
       }),
     );
     setPending((cur) => [...next, ...cur]);
@@ -91,13 +94,13 @@ export function ImportsView() {
     const canonicalRows = applyColumnMapping(item.mapping, item.rows);
     const normalized = normalizeImportedRows(item.destination, canonicalRows, item.filename);
     const batch: ImportBatch = {
-      id: `batch-${item.filename}-${item.rows.length}-${Date.now()}`,
+      id: `batch-${item.key}`,
       filename: item.filename,
       importType: item.destination,
       rowsImported: item.rows.length,
       rowsSkipped: 0,
       detectedColumns: item.headers,
-      importedAt: new Date().toISOString(),
+      importedAt: item.uploadedAtIso,
     };
     importData({ ...normalized, batch });
     discard(item.key);

@@ -64,8 +64,15 @@ export function AppShell({ children }: Readonly<{ children: React.ReactNode }>) 
           <nav className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:space-y-1 lg:overflow-visible lg:pb-0">
             {visibleNavItems.map((item) => {
               const active = pathname === item.href;
+              // sidebar-nav-link pairs with globals.css dark-mode contrast guards; do not remove
+              // without retesting inactive nav labels on the dark shell.
               return (
-                <Link key={item.href} href={item.href} className={`interactive-link flex shrink-0 items-center gap-2.5 whitespace-nowrap rounded-[0.95rem] px-3 py-2.5 text-sm transition lg:w-full lg:px-4 lg:py-3 ${active ? "bg-[linear-gradient(135deg,_rgba(21,94,239,0.18),_rgba(13,148,136,0.12))] font-semibold text-[var(--accent-strong)] shadow-[inset_0_0_0_1px_rgba(21,94,239,0.16)]" : "hover:bg-white/70"}`}>
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`interactive-link sidebar-nav-link flex shrink-0 items-center gap-2.5 whitespace-nowrap rounded-[0.95rem] px-3 py-2.5 text-sm transition lg:w-full lg:px-4 lg:py-3 ${active ? "bg-[linear-gradient(135deg,_rgba(21,94,239,0.18),_rgba(13,148,136,0.12))] font-semibold text-[var(--accent-strong)] shadow-[inset_0_0_0_1px_rgba(21,94,239,0.16)]" : "hover:bg-white/70"}`}
+                >
                   <item.icon className="h-4 w-4 shrink-0" />
                   <span className="font-medium">{item.label}</span>
                 </Link>

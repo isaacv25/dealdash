@@ -3,6 +3,12 @@
 import { useEffect, useId, useState } from "react";
 import { formatPhoneNumber } from "@/lib/dealdash/format";
 
+function formatDecimalDraft(value: number, decimals: number) {
+  if (value === 0) return "";
+  const factor = 10 ** decimals;
+  return String(Math.round(value * factor) / factor);
+}
+
 /**
  * A plain controlled <input type="number"> that re-derives its `value` from external state on
  * every render fights the user mid-keystroke: reformatting (e.g. toFixed(1)) strips a trailing
@@ -37,18 +43,14 @@ export function DecimalField({
 }) {
   const id = useId();
   const [focused, setFocused] = useState(false);
-  const [draft, setDraft] = useState(() => formatValue(value));
+  const [draft, setDraft] = useState(() => formatDecimalDraft(value, decimals));
 
   useEffect(() => {
-    if (!focused) setDraft(formatValue(value));
-    // formatValue depends on `decimals`; re-sync if that ever changes too.
+    // This input intentionally keeps a local draft while focused; when focus leaves, mirror the
+    // external persisted value back into the display without clobbering mid-keystroke decimals.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!focused) setDraft(formatDecimalDraft(value, decimals));
   }, [value, focused, decimals]);
-
-  function formatValue(v: number) {
-    if (v === 0) return "";
-    const factor = 10 ** decimals;
-    return String(Math.round(v * factor) / factor);
-  }
 
   function commit(raw: string) {
     const parsed = Number.parseFloat(raw);
@@ -58,7 +60,7 @@ export function DecimalField({
     const factor = 10 ** decimals;
     next = Math.round(next * factor) / factor;
     onCommit(next);
-    setDraft(formatValue(next));
+    setDraft(formatDecimalDraft(next, decimals));
   }
 
   return (
