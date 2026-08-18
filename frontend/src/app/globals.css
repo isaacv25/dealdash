@@ -41,16 +41,14 @@
    --card, so a Paused deal still reads as "the orange one" whether you're in light or dark mode.
    Text inside those surfaces isn't styled per-element -- it just inherits --foreground/--muted -- so
    without this, dark mode's near-white --foreground sits on a near-white card and disappears.
-   Re-scoping the two tokens (and color, so the container itself re-resolves them) on any element
-   that still carries one of those literal backgrounds keeps that text dark and legible, while pill
-   labels with their own explicit text-*-700 classes are unaffected (a rule matching an element
-   always wins over an inherited value, regardless of specificity). */
-:root[data-theme="dark"] [class*="bg-white"],
-:root[data-theme="dark"] [class*="bg-red-50"],
-:root[data-theme="dark"] [class*="bg-emerald-50"],
-:root[data-theme="dark"] [class*="bg-blue-50"],
-:root[data-theme="dark"] [class*="bg-orange-50"],
-:root[data-theme="dark"] [class*="bg-amber-50"] {
+   Match only the opacity-variant classes (bg-white/XX, not bare bg-white which might be on unrelated
+   elements like nav). Pill labels with their own explicit text-*-700 classes are unaffected. */
+:root[data-theme="dark"] [class*="bg-white/"],
+:root[data-theme="dark"] [class*="bg-red-50/"],
+:root[data-theme="dark"] [class*="bg-emerald-50/"],
+:root[data-theme="dark"] [class*="bg-blue-50/"],
+:root[data-theme="dark"] [class*="bg-orange-50/"],
+:root[data-theme="dark"] [class*="bg-amber-50/"] {
   --foreground: #0f172a;
   --muted: #55607a;
   color: var(--foreground);
