@@ -36,6 +36,26 @@
   --shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
 }
 
+/* A handful of surfaces (deal cards, fields, filter chips) intentionally keep their literal light
+   backgrounds (bg-white/NN, the pale funded-deal tint colors) in every theme rather than swapping to
+   --card, so a Paused deal still reads as "the orange one" whether you're in light or dark mode.
+   Text inside those surfaces isn't styled per-element -- it just inherits --foreground/--muted -- so
+   without this, dark mode's near-white --foreground sits on a near-white card and disappears.
+   Re-scoping the two tokens (and color, so the container itself re-resolves them) on any element
+   that still carries one of those literal backgrounds keeps that text dark and legible, while pill
+   labels with their own explicit text-*-700 classes are unaffected (a rule matching an element
+   always wins over an inherited value, regardless of specificity). */
+:root[data-theme="dark"] [class*="bg-white"],
+:root[data-theme="dark"] [class*="bg-red-50"],
+:root[data-theme="dark"] [class*="bg-emerald-50"],
+:root[data-theme="dark"] [class*="bg-blue-50"],
+:root[data-theme="dark"] [class*="bg-orange-50"],
+:root[data-theme="dark"] [class*="bg-amber-50"] {
+  --foreground: #0f172a;
+  --muted: #55607a;
+  color: var(--foreground);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -127,6 +147,14 @@ textarea {
 .field:focus {
   border-color: rgba(21, 94, 239, 0.38);
   box-shadow: 0 0 0 4px rgba(21, 94, 239, 0.1);
+}
+
+/* .field keeps its literal light background in dark mode too (matching the card surfaces above),
+   so it needs the same dark-text override -- var(--foreground) alone isn't enough since this rule
+   sets its own literal background, not --card. */
+:root[data-theme="dark"] .field {
+  background: rgba(255, 255, 255, 0.86);
+  color: #0f172a;
 }
 
 .primary-button {

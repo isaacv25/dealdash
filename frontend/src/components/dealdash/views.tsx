@@ -327,14 +327,20 @@ function MetricCard({
  * percent: 0–100
  */
 /** Colored dot + text badge for a funded deal's status stage. */
-function StatusBadge({ stage }: { stage: FundedDeal["statusStage"] }) {
-  const config = {
-    active: { dot: "bg-[var(--accent-strong)]", label: "Active" },
-    "paid-out": { dot: "bg-[var(--success)]", label: "Paid Out" },
-    clawback: { dot: "bg-[var(--danger)]", label: "Clawback" },
-    "slow-pay": { dot: "bg-[var(--warn)]", label: "Slow Pay" },
-    watch: { dot: "bg-[var(--warn)]", label: "Watch" },
-  }[stage] ?? { dot: "bg-[var(--muted)]", label: stage };
+/**
+ * Dot + word summary of the card's tag state -- deliberately mirrors the same 3-way color scheme as
+ * the tag pill/card tint (red=default, green=paid, blue=active) so this never disagrees with the
+ * rest of the card. Paused and Slow intentionally still read as "Active" here -- they're servicing
+ * nuances, not a different top-line status -- and the renewal overlay gets its own amber dot.
+ */
+function TagStatusDot({ state }: { state: FundedDealState }) {
+  const config = state.showsRenewalOverlay
+    ? { dot: "bg-amber-500", label: "Renewal" }
+    : state.primary === "default"
+      ? { dot: "bg-red-500", label: "Default" }
+      : state.primary === "paid"
+        ? { dot: "bg-emerald-500", label: "Paid" }
+        : { dot: "bg-blue-500", label: "Active" }; // active, paused, slow
 
   return (
     <span className="inline-flex items-center gap-1.5">
@@ -1074,6 +1080,10 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
 
   // Progress-bar color derives from the same state as card tint so the two can't disagree.
   const progressFillClass = progressFillClassForState(state);
+  // Paid/Default are terminal states -- the bar should read as fully resolved (solid color, full
+  // width) regardless of the underlying payment math, matching the fully-tinted card.
+  const progressWidthPercent =
+    state.primary === "paid" || state.primary === "default" ? 100 : Math.min(100, progress.progressPercent);
 
   return (
     <article
@@ -1094,7 +1104,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
         >
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge stage={deal.statusStage} />
+              <TagStatusDot state={state} />
               <CommissionBadge status={deal.commissionStatus} />
               {primaryTagOption && (
                 <span className={`pill text-xs ${tagBadgeClass(state.primary)}`}>{primaryTagOption.label}</span>
@@ -1139,7 +1149,7 @@ function FundedDealCard({ deal, index, allDeals }: { deal: FundedDeal; index: nu
           </span>
         </div>
         <div className="progress-track" style={{ height: "10px" }}>
-          <div className={`progress-fill h-full ${progressFillClass}`} style={{ width: `${Math.min(100, progress.progressPercent)}%` }} />
+          <div className={`progress-fill h-full ${progressFillClass}`} style={{ width: `${progressWidthPercent}%` }} />
         </div>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-[var(--muted)]">
           <span>
