@@ -117,6 +117,30 @@ export function progressForFundedDeal(deal: FundedDeal, now = new Date()) {
   const periodicPayment = periodicPaymentFromDeal(deal);
   const totalPeriods = periodsForTerm(deal.termValue, deal.termUnit, deal.paymentFrequency);
 
+  // Paused tag freezes progress: the balance and completed-count stay at exactly what's already been
+  // *posted* by the cron -- calendar-due-but-not-posted payments (which the schedule branch below
+  // normally advances against) are held back until the tag is cleared. This matches the broker's
+  // intent ("merchant is on hold, so my board shouldn't pretend today's payment landed"). A manual
+  // balance override still wins over pause because it's a hard, human-entered ground truth.
+  const manualBalanceOverride = deal.balanceOverrideAmount ?? deal.manualBalanceRemaining;
+  const isPaused = (deal.fundedTags ?? []).includes("paused") && manualBalanceOverride === undefined;
+  if (isPaused) {
+    const scheduled = deal.scheduledPaymentsCount ?? totalPeriods;
+    const postedPeriods = Math.min(scheduled, deal.postedPaymentsCount ?? 0);
+    const paidAmount = Math.min(grossPayback, deal.postedAmount ?? 0);
+    return {
+      grossPayback,
+      periodicPayment,
+      totalPeriods: scheduled,
+      completedPeriods: postedPeriods,
+      paymentsRemaining: Math.max(0, scheduled - postedPeriods),
+      paidAmount: roundCurrency(paidAmount),
+      balanceRemaining: roundCurrency(Math.max(0, grossPayback - paidAmount)),
+      progressPercent: grossPayback ? Math.min(100, Math.round((paidAmount / grossPayback) * 100)) : 0,
+      usesManualBalance: false,
+    };
+  }
+
   // The cron poster sets scheduleCompletedAt once every persisted schedule entry is posted -- that
   // is ground truth, not an estimate, and takes priority over everything else so a deal the cron
   // just finished posting never shows a contradictory "$X remaining" next to a "Paid Out" badge.
